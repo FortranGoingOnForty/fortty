@@ -9,6 +9,7 @@ module window_mod
   public :: window_t
   public :: window_create, window_destroy
   public :: window_should_close, window_swap_buffers, window_poll_events
+  public :: window_get_size
 
   type :: window_t
     type(c_ptr) :: handle = c_null_ptr
@@ -119,6 +120,17 @@ contains
   subroutine window_poll_events()
     call glfwPollEvents()
   end subroutine window_poll_events
+
+  ! Get current framebuffer size
+  subroutine window_get_size(win, width, height)
+    type(window_t), intent(in) :: win
+    integer, intent(out) :: width, height
+    integer(c_int) :: w, h
+
+    call glfwGetFramebufferSize(win%handle, w, h)
+    width = int(w)
+    height = int(h)
+  end subroutine window_get_size
 
   ! Callback: handle window resize
   subroutine framebuffer_size_callback(window, width, height) bind(C)
