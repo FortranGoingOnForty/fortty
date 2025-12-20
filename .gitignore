@@ -1,0 +1,29 @@
+# Build artifacts
+build/
+cmake-build-*/
+
+# Fortran module files
+*.mod
+*.smod
+
+# Object files
+*.o
+*.obj
+
+# Documentation (generated during planning)
+docs/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.*.sw?
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Compilation database
+compile_commands.json

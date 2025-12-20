@@ -1,0 +1,45 @@
+cmake_minimum_required(VERSION 3.16)
+project(fortty LANGUAGES Fortran C)
+
+# C standard for GLAD
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+# Compiler warnings
+if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
+    add_compile_options(-Wall -Wextra -pedantic)
+endif()
+
+# Find dependencies
+find_package(glfw3 REQUIRED)
+find_package(OpenGL REQUIRED)
+
+# GLAD loader library (C) and helper functions
+add_library(glad STATIC
+    src/gl/glad.c
+    c_src/gl_loader.c
+)
+target_include_directories(glad PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(glad PRIVATE glfw)
+
+# Fortran module output directory
+set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/modules)
+
+# Fortran sources (order matters for module dependencies)
+set(FORTRAN_SOURCES
+    src/core/types.f90
+    src/gl/gl_bindings.f90
+    src/window/glfw_bindings.f90
+    src/window/window.f90
+    src/fortty.f90
+)
+
+# Main executable
+add_executable(fortty ${FORTRAN_SOURCES})
+target_include_directories(fortty PRIVATE ${CMAKE_BINARY_DIR}/modules)
+target_link_libraries(fortty PRIVATE glad glfw OpenGL::GL)
+
+# For Linux, we need dl for GLAD's dlopen
+if(UNIX AND NOT APPLE)
+    target_link_libraries(fortty PRIVATE dl)
+endif()
