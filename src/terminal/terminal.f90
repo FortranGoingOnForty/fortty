@@ -3,6 +3,7 @@ module terminal_mod
   use screen_mod
   use cursor_mod
   use scrollback_mod
+  use wcwidth_mod, only: codepoint_width
   implicit none
   private
 
@@ -23,6 +24,7 @@ module terminal_mod
   public :: terminal_scroll_view, terminal_get_scroll_offset, terminal_reset_scroll_view
   public :: terminal_get_scrollback_count, terminal_get_scrollback_line
   public :: terminal_queue_response, terminal_get_response, terminal_has_response
+  public :: terminal_set_title, terminal_get_title, terminal_has_title_changed
 
   integer, parameter :: RESPONSE_BUFFER_SIZE = 256
 
@@ -54,6 +56,10 @@ module terminal_mod
     ! Response buffer for escape sequence replies (e.g., DA1)
     character(len=RESPONSE_BUFFER_SIZE) :: response = ''
     integer :: response_len = 0
+
+    ! Window title (set via OSC 0/1/2)
+    character(len=256) :: title = 'fortty'
+    logical :: title_changed = .false.
   end type terminal_t
 
 contains
@@ -144,8 +150,9 @@ contains
   subroutine terminal_put_char(term, codepoint)
     type(terminal_t), intent(inout) :: term
     integer, intent(in) :: codepoint
-    type(cell_t) :: cell
+    type(cell_t) :: cell, cont_cell
     type(screen_t), pointer :: scr
+    integer :: width
 
     scr => terminal_active_screen(term)
 
@@ -169,17 +176,47 @@ contains
         return
     end select
 
+    ! Determine character display width
+    width = codepoint_width(codepoint)
+
+    ! Skip zero-width characters (combining marks, etc.)
+    if (width == 0) return
+
+    ! Check if wide character fits before line end
+    if (width == 2 .and. term%cursor%col + 1 > term%cols) then
+      if (term%mode_autowrap) then
+        call terminal_newline(term)
+        term%cursor%col = 1
+      else
+        ! Can't fit - don't draw
+        return
+      end if
+    end if
+
     ! Printable character - create cell with current style
     cell%codepoint = codepoint
     cell%fg = term%cursor%fg
     cell%bg = term%cursor%bg
     cell%attrs = term%cursor%attrs
+    cell%width = width
+    cell%is_continuation = .false.
 
     ! Place in buffer
     call screen_set_cell(scr, term%cursor%row, term%cursor%col, cell)
 
-    ! Advance cursor
-    term%cursor%col = term%cursor%col + 1
+    ! For wide characters, write continuation cell
+    if (width == 2 .and. term%cursor%col < term%cols) then
+      cont_cell%codepoint = 0
+      cont_cell%fg = term%cursor%fg
+      cont_cell%bg = term%cursor%bg
+      cont_cell%attrs = term%cursor%attrs
+      cont_cell%width = 0
+      cont_cell%is_continuation = .true.
+      call screen_set_cell(scr, term%cursor%row, term%cursor%col + 1, cont_cell)
+    end if
+
+    ! Advance cursor by character width
+    term%cursor%col = term%cursor%col + width
 
     ! Handle wrap at end of line
     if (term%cursor%col > term%cols) then
@@ -696,5 +733,31 @@ contains
     term%response = ''
     term%response_len = 0
   end subroutine terminal_get_response
+
+  ! Set window title (from OSC 0/1/2)
+  subroutine terminal_set_title(term, title)
+    type(terminal_t), intent(inout) :: term
+    character(len=*), intent(in) :: title
+
+    term%title = title
+    term%title_changed = .true.
+  end subroutine terminal_set_title
+
+  ! Get window title
+  function terminal_get_title(term) result(title)
+    type(terminal_t), intent(in) :: term
+    character(len=256) :: title
+
+    title = term%title
+  end function terminal_get_title
+
+  ! Check if title has changed (and clear the flag)
+  function terminal_has_title_changed(term) result(changed)
+    type(terminal_t), intent(inout) :: term
+    logical :: changed
+
+    changed = term%title_changed
+    term%title_changed = .false.
+  end function terminal_has_title_changed
 
 end module terminal_mod

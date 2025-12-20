@@ -5,13 +5,16 @@ module window_mod
   use gl_bindings
   use pty_mod
   use terminal_mod
+  use selection_mod
   implicit none
   private
 
-  public :: window_t
+  public :: window_t, selection_t
   public :: window_create, window_destroy
   public :: window_should_close, window_swap_buffers, window_poll_events
   public :: window_get_size, window_set_pty, window_set_terminal
+  public :: window_set_title, window_set_cell_size
+  public :: window_get_selection, window_clipboard_set, window_clipboard_get
 
   type :: window_t
     type(c_ptr) :: handle = c_null_ptr
@@ -29,6 +32,13 @@ module window_mod
 
   ! Module-level terminal pointer for scrollback
   type(terminal_t), pointer, save :: active_term => null()
+
+  ! Selection state for mouse-based text selection
+  type(selection_t), save :: active_selection
+
+  ! Cell dimensions for mouse coordinate conversion
+  integer, save :: cell_width = 10
+  integer, save :: cell_height = 18
 
   ! Interface to C helper for loading OpenGL
   interface
@@ -99,6 +109,8 @@ contains
     dummy = glfwSetKeyCallback(win%handle, c_funloc(key_callback))
     dummy = glfwSetCharCallback(win%handle, c_funloc(char_callback))
     dummy = glfwSetScrollCallback(win%handle, c_funloc(scroll_callback))
+    dummy = glfwSetMouseButtonCallback(win%handle, c_funloc(mouse_button_callback))
+    dummy = glfwSetCursorPosCallback(win%handle, c_funloc(cursor_pos_callback))
 
   end function window_create
 
@@ -196,6 +208,14 @@ contains
     ! Reset scroll view on any other key input (return to live view)
     if (associated(active_term)) then
       call terminal_reset_scroll_view(active_term)
+    end if
+
+    ! Handle Ctrl+Shift+V for paste
+    if (iand(mods, GLFW_MOD_CONTROL) /= 0 .and. iand(mods, GLFW_MOD_SHIFT) /= 0) then
+      if (key == GLFW_KEY_V) then
+        call handle_paste(window)
+        return
+      end if
     end if
 
     ! Handle Ctrl combinations (these don't trigger char_callback)
@@ -444,5 +464,215 @@ contains
     ! Positive yoffset = scroll up (back in history)
     call terminal_scroll_view(active_term, scroll_lines)
   end subroutine scroll_callback
+
+  ! Set window title
+  subroutine window_set_title(win, title)
+    type(window_t), intent(in) :: win
+    character(len=*), intent(in) :: title
+    character(len=257) :: c_title
+
+    if (.not. c_associated(win%handle)) return
+
+    c_title = trim(title) // c_null_char
+    call glfwSetWindowTitle(win%handle, c_title)
+  end subroutine window_set_title
+
+  ! Set cell dimensions for mouse coordinate conversion
+  subroutine window_set_cell_size(w, h)
+    integer, intent(in) :: w, h
+
+    cell_width = w
+    cell_height = h
+  end subroutine window_set_cell_size
+
+  ! Get selection state (for rendering)
+  function window_get_selection() result(sel)
+    type(selection_t) :: sel
+
+    sel = active_selection
+  end function window_get_selection
+
+  ! Set clipboard content
+  subroutine window_clipboard_set(win, text)
+    type(window_t), intent(in) :: win
+    character(len=*), intent(in) :: text
+    character(len=4097) :: c_text
+
+    if (.not. c_associated(win%handle)) return
+    if (len_trim(text) == 0) return
+
+    c_text = trim(text) // c_null_char
+    call glfwSetClipboardString(win%handle, c_text)
+  end subroutine window_clipboard_set
+
+  ! Get clipboard content
+  function window_clipboard_get(win) result(text)
+    type(window_t), intent(in) :: win
+    character(len=4096) :: text
+    type(c_ptr) :: clip_ptr
+    character(len=1), pointer :: chars(:)
+    integer :: i, length
+
+    text = ''
+    if (.not. c_associated(win%handle)) return
+
+    clip_ptr = glfwGetClipboardString(win%handle)
+    if (.not. c_associated(clip_ptr)) return
+
+    ! Convert C string to Fortran string
+    call c_f_pointer(clip_ptr, chars, [4096])
+    length = 0
+    do i = 1, 4096
+      if (chars(i) == c_null_char) exit
+      length = i
+    end do
+
+    do i = 1, min(length, 4096)
+      text(i:i) = chars(i)
+    end do
+  end function window_clipboard_get
+
+  ! Callback: handle mouse button events
+  subroutine mouse_button_callback(window, button, action, mods) bind(C)
+    type(c_ptr), value :: window
+    integer(c_int), value :: button, action, mods
+    real(c_double) :: xpos, ypos
+    integer :: col, row
+
+    ! Only handle left mouse button for selection
+    if (button /= GLFW_MOUSE_BUTTON_LEFT) return
+
+    call glfwGetCursorPos(window, xpos, ypos)
+
+    ! Convert pixel position to terminal cell coordinates (1-based)
+    col = int(xpos / cell_width) + 1
+    row = int(ypos / cell_height) + 1
+
+    ! Clamp to valid range
+    if (associated(active_term)) then
+      if (col < 1) col = 1
+      if (col > active_term%cols) col = active_term%cols
+      if (row < 1) row = 1
+      if (row > active_term%rows) row = active_term%rows
+    end if
+
+    if (action == GLFW_PRESS) then
+      call selection_start(active_selection, row, col)
+    else if (action == GLFW_RELEASE) then
+      call selection_end(active_selection)
+      ! Copy selection to clipboard if active
+      if (selection_is_active(active_selection)) then
+        call copy_selection_to_clipboard(window)
+      end if
+    end if
+  end subroutine mouse_button_callback
+
+  ! Callback: handle cursor position changes
+  subroutine cursor_pos_callback(window, xpos, ypos) bind(C)
+    type(c_ptr), value :: window
+    real(c_double), value :: xpos, ypos
+    integer :: col, row
+
+    ! Only update if actively selecting
+    if (.not. active_selection%selecting) return
+
+    ! Convert pixel position to terminal cell coordinates (1-based)
+    col = int(xpos / cell_width) + 1
+    row = int(ypos / cell_height) + 1
+
+    ! Clamp to valid range
+    if (associated(active_term)) then
+      if (col < 1) col = 1
+      if (col > active_term%cols) col = active_term%cols
+      if (row < 1) row = 1
+      if (row > active_term%rows) row = active_term%rows
+    end if
+
+    call selection_update(active_selection, row, col)
+  end subroutine cursor_pos_callback
+
+  ! Copy selection to clipboard
+  subroutine copy_selection_to_clipboard(window)
+    use screen_mod
+    use cell_mod
+    type(c_ptr), intent(in) :: window
+    type(screen_t), pointer :: scr
+    type(cell_t) :: cell
+    character(len=4096) :: text
+    character(len=4) :: utf8
+    integer :: r1, c1, r2, c2, row, col, pos, utf8_len
+
+    if (.not. associated(active_term)) return
+    if (.not. selection_is_active(active_selection)) return
+
+    scr => terminal_active_screen(active_term)
+    call selection_get_bounds(active_selection, r1, c1, r2, c2)
+
+    text = ''
+    pos = 1
+
+    do row = r1, r2
+      do col = 1, scr%cols
+        ! Check if this cell is in selection
+        if (.not. selection_contains(active_selection, row, col)) cycle
+
+        cell = screen_get_cell(scr, row, col)
+
+        ! Convert codepoint to UTF-8
+        if (cell%codepoint >= 32 .and. cell%codepoint < 1114112) then
+          call codepoint_to_utf8(cell%codepoint, utf8, utf8_len)
+          if (pos + utf8_len - 1 <= 4096) then
+            text(pos:pos+utf8_len-1) = utf8(1:utf8_len)
+            pos = pos + utf8_len
+          end if
+        end if
+      end do
+
+      ! Add newline between rows (except last row)
+      if (row < r2 .and. pos < 4096) then
+        text(pos:pos) = char(10)
+        pos = pos + 1
+      end if
+    end do
+
+    ! Set clipboard
+    if (pos > 1) then
+      call glfwSetClipboardString(window, trim(text(1:pos-1)) // c_null_char)
+    end if
+  end subroutine copy_selection_to_clipboard
+
+  ! Handle paste from clipboard
+  subroutine handle_paste(window)
+    type(c_ptr), intent(in) :: window
+    type(c_ptr) :: clip_ptr
+    character(len=1), pointer :: chars(:)
+    integer :: i, length
+
+    if (.not. associated(active_pty)) return
+
+    clip_ptr = glfwGetClipboardString(window)
+    if (.not. c_associated(clip_ptr)) return
+
+    ! Find length of C string
+    call c_f_pointer(clip_ptr, chars, [4096])
+    length = 0
+    do i = 1, 4096
+      if (chars(i) == c_null_char) exit
+      length = i
+    end do
+
+    ! Write to PTY
+    if (length > 0) then
+      block
+        character(len=4096) :: paste_text
+        integer :: j
+        paste_text = ''
+        do j = 1, length
+          paste_text(j:j) = chars(j)
+        end do
+        call pty_write(active_pty, paste_text, length)
+      end block
+    end if
+  end subroutine handle_paste
 
 end module window_mod

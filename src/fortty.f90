@@ -1,5 +1,6 @@
 program fortty
   use window_mod
+  use selection_mod, only: selection_contains
   use gl_bindings
   use renderer_mod
   use font_mod, only: font_find_monospace, font_find_for_codepoint
@@ -9,6 +10,8 @@ program fortty
   use screen_mod
   use cell_mod, only: cell_t, set_palette_color, set_default_colors
   use config_mod
+  use cursor_mod, only: CURSOR_BLOCK, CURSOR_UNDERLINE, CURSOR_BAR
+  use glfw_bindings, only: glfwGetTime
   implicit none
 
   type(window_t) :: win
@@ -31,6 +34,9 @@ program fortty
   real :: x, y, r, g, b, bg_r, bg_g, bg_b
   type(cell_t), allocatable :: sb_line(:)
   integer :: cell_width, cell_height  ! From font metrics
+  real(8) :: current_time, last_time, blink_timer
+  logical :: cursor_blink_visible
+  type(selection_t) :: sel
 
   ! Load configuration (uses defaults if no config file found)
   cfg = config_load('')
@@ -146,6 +152,9 @@ program fortty
   if (cell_height < 1) cell_height = 18  ! Fallback
   print *, "Font cell size:", cell_width, "x", cell_height
 
+  ! Share cell dimensions with window module for mouse selection
+  call window_set_cell_size(cell_width, cell_height)
+
   ! Calculate terminal dimensions based on font metrics
   term_cols = win_width / cell_width
   term_rows = win_height / cell_height
@@ -171,8 +180,22 @@ program fortty
   call window_set_pty(pty)
   call window_set_terminal(term)
 
+  ! Initialize blink timer
+  last_time = glfwGetTime()
+  blink_timer = 0.0d0
+  cursor_blink_visible = .true.
+
   ! Main event loop
   do while (.not. window_should_close(win) .and. pty_is_alive(pty))
+    ! Update blink timer
+    current_time = glfwGetTime()
+    blink_timer = blink_timer + (current_time - last_time)
+    last_time = current_time
+    if (blink_timer > 0.5d0) then
+      cursor_blink_visible = .not. cursor_blink_visible
+      blink_timer = 0.0d0
+    end if
+
     ! Check for window resize
     call window_get_size(win, win_width, win_height)
     if (win_width /= prev_width .or. win_height /= prev_height) then
@@ -210,6 +233,11 @@ program fortty
       end if
     end if
 
+    ! Check for window title changes (from OSC 0/1/2)
+    if (terminal_has_title_changed(term)) then
+      call window_set_title(win, terminal_get_title(term))
+    end if
+
     ! Clear screen with background color from config
     bg_r = real(cfg%bg_color%r) / 255.0
     bg_g = real(cfg%bg_color%g) / 255.0
@@ -222,6 +250,9 @@ program fortty
 
     scr => terminal_active_screen(term)
     scroll_offset = terminal_get_scroll_offset(term)
+
+    ! Get current selection for highlighting
+    sel = window_get_selection()
 
     ! Allocate/resize scrollback line buffer if needed
     if (.not. allocated(sb_line)) then
@@ -242,8 +273,19 @@ program fortty
         call terminal_get_scrollback_line(term, sb_offset - 1, sb_line, term_cols)
         do col = 1, min(term_cols, scr%cols)
           cell = sb_line(col)
-          if (cell%codepoint /= 32) then
-            x = real(col - 1) * cell_width
+
+          ! Skip continuation cells (2nd half of wide chars)
+          if (cell%is_continuation) cycle
+
+          x = real(col - 1) * cell_width
+
+          ! Draw selection background if selected
+          if (selection_contains(sel, row, col)) then
+            call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                    0.3, 0.3, 0.6, 1.0)
+          end if
+
+          if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
             r = real(cell%fg%r) / 255.0
             g = real(cell%fg%g) / 255.0
             b = real(cell%fg%b) / 255.0
@@ -256,8 +298,19 @@ program fortty
         if (screen_row >= 1 .and. screen_row <= scr%rows) then
           do col = 1, scr%cols
             cell = screen_get_cell(scr, screen_row, col)
-            if (cell%codepoint /= 32) then
-              x = real(col - 1) * cell_width
+
+            ! Skip continuation cells (2nd half of wide chars)
+            if (cell%is_continuation) cycle
+
+            x = real(col - 1) * cell_width
+
+            ! Draw selection background if selected
+            if (selection_contains(sel, row, col)) then
+              call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                      0.3, 0.3, 0.6, 1.0)
+            end if
+
+            if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
               r = real(cell%fg%r) / 255.0
               g = real(cell%fg%g) / 255.0
               b = real(cell%fg%b) / 255.0
@@ -270,10 +323,29 @@ program fortty
 
     ! Draw cursor if visible (only when not scrolled back)
     if (term%cursor%visible .and. scroll_offset == 0) then
-      x = real(term%cursor%col - 1) * cell_width
-      y = real(term%cursor%row) * cell_height
-      ! Draw cursor as underscore character for visibility
-      call renderer_draw_char(ren, x, y, 95, 0.7, 0.7, 0.7, 1.0)  ! '_'
+      ! Check blink state - only hide cursor if blink is enabled and in off phase
+      if (.not. term%cursor%blink .or. cursor_blink_visible) then
+        x = real(term%cursor%col - 1) * cell_width
+        y = real(term%cursor%row - 1) * cell_height
+
+        select case (term%cursor%style)
+          case (CURSOR_BLOCK)
+            ! Filled block cursor
+            call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                    0.7, 0.7, 0.7, 0.8)
+          case (CURSOR_UNDERLINE)
+            ! Underline at bottom of cell
+            call renderer_draw_rect(ren, x, y + real(cell_height) - 2.0, &
+                                    real(cell_width), 2.0, 0.7, 0.7, 0.7, 1.0)
+          case (CURSOR_BAR)
+            ! Vertical bar at left of cell
+            call renderer_draw_rect(ren, x, y, 2.0, real(cell_height), 0.7, 0.7, 0.7, 1.0)
+          case default
+            ! Fallback to block
+            call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                    0.7, 0.7, 0.7, 0.8)
+        end select
+      end if
     end if
 
     call renderer_flush(ren)
