@@ -2,6 +2,7 @@ module parser_mod
   use cell_mod
   use screen_mod
   use terminal_mod
+  use cursor_mod, only: CURSOR_BLOCK, CURSOR_UNDERLINE, CURSOR_BAR
   implicit none
   private
 
@@ -29,6 +30,10 @@ module parser_mod
     ! For CSI ? and > sequences
     logical :: has_private = .false.
     character(len=1) :: private_marker = ' '
+
+    ! Intermediate character (for sequences like CSI Ps SP q)
+    character(len=1) :: intermediate = ' '
+    logical :: has_intermediate = .false.
 
     ! OSC string buffer (for window title, etc.)
     character(len=256) :: osc_buffer
@@ -61,6 +66,8 @@ contains
     p%param_started = .false.
     p%has_private = .false.
     p%private_marker = ' '
+    p%has_intermediate = .false.
+    p%intermediate = ' '
     p%osc_buffer = ''
     p%osc_len = 0
     ! Note: Don't reset UTF-8 state here - it persists across escape sequences
@@ -258,8 +265,10 @@ contains
       return
     end if
 
-    ! Intermediate byte or unknown - ignore but stay in CSI
+    ! Intermediate byte (space, !, ", etc.) - store it
     if (byte >= 32 .and. byte <= 47) then
+      p%has_intermediate = .true.
+      p%intermediate = char(byte)
       return
     end if
 
@@ -275,23 +284,69 @@ contains
 
     ! OSC ends with BEL (7) or ST (ESC \)
     if (byte == 7) then  ! BEL
-      ! OSC complete - we could set window title here
+      call dispatch_osc(p, term)
       call parser_reset(p)
       return
     end if
 
     if (byte == 27) then  ! ESC - might be ST
-      ! For simplicity, just reset - real parser would check for '\'
+      ! For simplicity, dispatch and reset
+      call dispatch_osc(p, term)
       call parser_reset(p)
       return
     end if
 
-    ! Accumulate OSC string (we ignore it for now)
+    ! Accumulate OSC string
     if (p%osc_len < 256) then
       p%osc_len = p%osc_len + 1
       p%osc_buffer(p%osc_len:p%osc_len) = char(byte)
     end if
   end subroutine handle_osc
+
+  ! Dispatch OSC command
+  subroutine dispatch_osc(p, term)
+    type(parser_t), intent(in) :: p
+    type(terminal_t), intent(inout) :: term
+    integer :: cmd, sep_pos, i
+    character(len=256) :: title_text
+
+    if (p%osc_len == 0) return
+
+    ! Parse command number (before first ';')
+    sep_pos = 0
+    do i = 1, p%osc_len
+      if (p%osc_buffer(i:i) == ';') then
+        sep_pos = i
+        exit
+      end if
+    end do
+
+    if (sep_pos == 0) return  ! No separator found
+
+    ! Extract command number
+    cmd = 0
+    do i = 1, sep_pos - 1
+      if (p%osc_buffer(i:i) >= '0' .and. p%osc_buffer(i:i) <= '9') then
+        cmd = cmd * 10 + (ichar(p%osc_buffer(i:i)) - ichar('0'))
+      end if
+    end do
+
+    ! Extract title text (after ';')
+    title_text = ''
+    if (sep_pos < p%osc_len) then
+      title_text = p%osc_buffer(sep_pos + 1:p%osc_len)
+    end if
+
+    select case (cmd)
+      case (0)  ! Set icon name and window title
+        call terminal_set_title(term, trim(title_text))
+      case (1)  ! Set icon name only (we treat as title too)
+        call terminal_set_title(term, trim(title_text))
+      case (2)  ! Set window title only
+        call terminal_set_title(term, trim(title_text))
+      ! Other OSC commands can be added here
+    end select
+  end subroutine dispatch_osc
 
   ! Dispatch CSI command based on final byte
   subroutine dispatch_csi(p, term, cmd)
@@ -309,6 +364,34 @@ contains
     ! Handle private sequences (CSI ? ...)
     if (p%has_private .and. p%private_marker == '?') then
       call dispatch_dec_private(p, term, cmd, n)
+      return
+    end if
+
+    ! Handle DECSCUSR (CSI Ps SP q) - Set Cursor Style
+    if (p%has_intermediate .and. p%intermediate == ' ' .and. cmd == 113) then
+      ! Ps=0,1: blinking block, Ps=2: steady block
+      ! Ps=3: blinking underline, Ps=4: steady underline
+      ! Ps=5: blinking bar, Ps=6: steady bar
+      select case (n)
+        case (0, 1)  ! Blinking block
+          term%cursor%style = CURSOR_BLOCK
+          term%cursor%blink = .true.
+        case (2)  ! Steady block
+          term%cursor%style = CURSOR_BLOCK
+          term%cursor%blink = .false.
+        case (3)  ! Blinking underline
+          term%cursor%style = CURSOR_UNDERLINE
+          term%cursor%blink = .true.
+        case (4)  ! Steady underline
+          term%cursor%style = CURSOR_UNDERLINE
+          term%cursor%blink = .false.
+        case (5)  ! Blinking bar
+          term%cursor%style = CURSOR_BAR
+          term%cursor%blink = .true.
+        case (6)  ! Steady bar
+          term%cursor%style = CURSOR_BAR
+          term%cursor%blink = .false.
+      end select
       return
     end if
 

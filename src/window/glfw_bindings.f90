@@ -84,6 +84,11 @@ module glfw_bindings
   integer(c_int), parameter :: GLFW_PRESS = 1
   integer(c_int), parameter :: GLFW_REPEAT = 2
 
+  ! Mouse button constants
+  integer(c_int), parameter :: GLFW_MOUSE_BUTTON_LEFT = 0
+  integer(c_int), parameter :: GLFW_MOUSE_BUTTON_RIGHT = 1
+  integer(c_int), parameter :: GLFW_MOUSE_BUTTON_MIDDLE = 2
+
   ! Callback type for framebuffer size
   abstract interface
     subroutine glfw_framebuffer_size_callback(window, width, height) bind(C)
@@ -115,6 +120,18 @@ module glfw_bindings
       type(c_ptr), value :: window
       real(c_double), value :: xoffset, yoffset
     end subroutine glfw_scroll_callback
+
+    subroutine glfw_mouse_button_callback(window, button, action, mods) bind(C)
+      import :: c_ptr, c_int
+      type(c_ptr), value :: window
+      integer(c_int), value :: button, action, mods
+    end subroutine glfw_mouse_button_callback
+
+    subroutine glfw_cursor_pos_callback(window, xpos, ypos) bind(C)
+      import :: c_ptr, c_double
+      type(c_ptr), value :: window
+      real(c_double), value :: xpos, ypos
+    end subroutine glfw_cursor_pos_callback
   end interface
 
   interface
@@ -168,6 +185,13 @@ module glfw_bindings
       integer(c_int), value :: value
     end subroutine glfwSetWindowShouldClose
 
+    ! void glfwSetWindowTitle(GLFWwindow* window, const char* title)
+    subroutine glfwSetWindowTitle(window, title) bind(C, name="glfwSetWindowTitle")
+      import :: c_ptr, c_char
+      type(c_ptr), value :: window
+      character(kind=c_char), intent(in) :: title(*)
+    end subroutine glfwSetWindowTitle
+
     ! void glfwSwapBuffers(GLFWwindow* window)
     subroutine glfwSwapBuffers(window) bind(C, name="glfwSwapBuffers")
       import :: c_ptr
@@ -177,6 +201,11 @@ module glfw_bindings
     ! void glfwPollEvents(void)
     subroutine glfwPollEvents() bind(C, name="glfwPollEvents")
     end subroutine glfwPollEvents
+
+    ! double glfwGetTime(void)
+    real(c_double) function glfwGetTime() bind(C, name="glfwGetTime")
+      import :: c_double
+    end function glfwGetTime
 
     ! void glfwGetFramebufferSize(GLFWwindow* window, int* width, int* height)
     subroutine glfwGetFramebufferSize(window, width, height) bind(C, name="glfwGetFramebufferSize")
@@ -230,6 +259,42 @@ module glfw_bindings
       import :: c_funptr, c_char
       character(kind=c_char), intent(in) :: procname(*)
     end function glfwGetProcAddress
+
+    ! GLFWmousebuttonfun glfwSetMouseButtonCallback(GLFWwindow* window, GLFWmousebuttonfun callback)
+    type(c_funptr) function glfwSetMouseButtonCallback(window, callback) &
+        bind(C, name="glfwSetMouseButtonCallback")
+      import :: c_ptr, c_funptr
+      type(c_ptr), value :: window
+      type(c_funptr), value :: callback
+    end function glfwSetMouseButtonCallback
+
+    ! GLFWcursorposfun glfwSetCursorPosCallback(GLFWwindow* window, GLFWcursorposfun callback)
+    type(c_funptr) function glfwSetCursorPosCallback(window, callback) &
+        bind(C, name="glfwSetCursorPosCallback")
+      import :: c_ptr, c_funptr
+      type(c_ptr), value :: window
+      type(c_funptr), value :: callback
+    end function glfwSetCursorPosCallback
+
+    ! void glfwGetCursorPos(GLFWwindow* window, double* xpos, double* ypos)
+    subroutine glfwGetCursorPos(window, xpos, ypos) bind(C, name="glfwGetCursorPos")
+      import :: c_ptr, c_double
+      type(c_ptr), value :: window
+      real(c_double), intent(out) :: xpos, ypos
+    end subroutine glfwGetCursorPos
+
+    ! const char* glfwGetClipboardString(GLFWwindow* window)
+    type(c_ptr) function glfwGetClipboardString(window) bind(C, name="glfwGetClipboardString")
+      import :: c_ptr
+      type(c_ptr), value :: window
+    end function glfwGetClipboardString
+
+    ! void glfwSetClipboardString(GLFWwindow* window, const char* string)
+    subroutine glfwSetClipboardString(window, string) bind(C, name="glfwSetClipboardString")
+      import :: c_ptr, c_char
+      type(c_ptr), value :: window
+      character(kind=c_char), intent(in) :: string(*)
+    end subroutine glfwSetClipboardString
   end interface
 
 end module glfw_bindings

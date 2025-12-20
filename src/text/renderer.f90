@@ -12,6 +12,7 @@ module renderer_mod
   public :: renderer_create, renderer_destroy
   public :: renderer_begin, renderer_draw_char, renderer_draw_string, renderer_flush
   public :: renderer_set_projection, renderer_load_fallback_font
+  public :: renderer_draw_rect
 
   ! Vertex format: position(2) + texcoord(2) + color(4) = 8 floats per vertex
   integer, parameter :: FLOATS_PER_VERTEX = 8
@@ -336,5 +337,70 @@ contains
     if (.not. r%initialized) return
     call font_load_fallback(r%font, font_path)
   end subroutine renderer_load_fallback_font
+
+  ! Draw a solid rectangle at position (x, y) with size (w, h)
+  subroutine renderer_draw_rect(r, x, y, w, h, red, green, blue, alpha)
+    type(renderer_t), intent(inout) :: r
+    real, intent(in) :: x, y, w, h
+    real, intent(in) :: red, green, blue, alpha
+    real(c_float) :: x0, y0, x1, y1
+    real(c_float) :: u0, v0, u1, v1
+    integer :: base
+
+    ! Check for overflow
+    if (r%vertex_count + VERTICES_PER_QUAD > MAX_VERTICES) then
+      call renderer_flush(r)
+    end if
+
+    ! Rectangle corners
+    x0 = real(x, c_float)
+    y0 = real(y, c_float)
+    x1 = x0 + real(w, c_float)
+    y1 = y0 + real(h, c_float)
+
+    ! Use UV coords (0,0) which should sample a solid pixel from atlas
+    ! Most atlases have a solid white pixel at origin
+    u0 = 0.0_c_float
+    v0 = 0.0_c_float
+    u1 = 0.001_c_float  ! Tiny region to avoid sampling other glyphs
+    v1 = 0.001_c_float
+
+    ! Build 6 vertices for 2 triangles
+    base = r%vertex_count * FLOATS_PER_VERTEX + 1
+
+    ! Triangle 1: bottom-left, bottom-right, top-left
+    r%vertices(base:base+7) = [x0, y1, u0, v1, &
+                               real(red,c_float), real(green,c_float), &
+                               real(blue,c_float), real(alpha,c_float)]
+    base = base + FLOATS_PER_VERTEX
+
+    r%vertices(base:base+7) = [x1, y1, u1, v1, &
+                               real(red,c_float), real(green,c_float), &
+                               real(blue,c_float), real(alpha,c_float)]
+    base = base + FLOATS_PER_VERTEX
+
+    r%vertices(base:base+7) = [x0, y0, u0, v0, &
+                               real(red,c_float), real(green,c_float), &
+                               real(blue,c_float), real(alpha,c_float)]
+    base = base + FLOATS_PER_VERTEX
+
+    ! Triangle 2: bottom-right, top-right, top-left
+    r%vertices(base:base+7) = [x1, y1, u1, v1, &
+                               real(red,c_float), real(green,c_float), &
+                               real(blue,c_float), real(alpha,c_float)]
+    base = base + FLOATS_PER_VERTEX
+
+    r%vertices(base:base+7) = [x1, y0, u1, v0, &
+                               real(red,c_float), real(green,c_float), &
+                               real(blue,c_float), real(alpha,c_float)]
+    base = base + FLOATS_PER_VERTEX
+
+    r%vertices(base:base+7) = [x0, y0, u0, v0, &
+                               real(red,c_float), real(green,c_float), &
+                               real(blue,c_float), real(alpha,c_float)]
+
+    r%vertex_count = r%vertex_count + VERTICES_PER_QUAD
+
+  end subroutine renderer_draw_rect
 
 end module renderer_mod
