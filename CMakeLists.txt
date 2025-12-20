@@ -33,7 +33,10 @@ set(FORTRAN_SOURCES
     src/core/types.f90
     src/gl/gl_bindings.f90
     src/text/glyph.f90
+    src/gl/shader.f90
     src/text/font.f90
+    src/text/atlas.f90
+    src/text/renderer.f90
     src/window/glfw_bindings.f90
     src/window/window.f90
     src/fortty.f90
