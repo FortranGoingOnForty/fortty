@@ -3,20 +3,27 @@ program fortty
   use gl_bindings
   use renderer_mod
   use pty_mod
+  use terminal_mod
+  use screen_mod
+  use cell_mod
   implicit none
 
   type(window_t) :: win
   type(renderer_t) :: ren
   type(pty_t) :: pty
+  type(terminal_t) :: term
+  type(screen_t), pointer :: scr
+  type(cell_t) :: cell
   integer :: win_width, win_height
   integer :: prev_width, prev_height
   integer :: term_rows, term_cols
   integer :: new_rows, new_cols
   character(len=256) :: font_path
   character(len=4096) :: pty_buffer
-  integer :: nbytes
+  integer :: nbytes, i, row, col
+  real :: x, y, r, g, b
   integer, parameter :: CELL_WIDTH = 10   ! Approximate char width
-  integer, parameter :: CELL_HEIGHT = 20  ! Approximate line height
+  integer, parameter :: CELL_HEIGHT = 18  ! Approximate line height
 
   ! Window dimensions
   win_width = 800
@@ -52,18 +59,19 @@ program fortty
   prev_width = win_width
   prev_height = win_height
 
+  ! Initialize terminal state
+  call terminal_init(term, term_rows, term_cols)
+
   ! Open PTY with shell
   pty = pty_open("", term_rows, term_cols)  ! Empty string = use $SHELL
 
   if (.not. pty%active) then
     print *, "Error: Could not open PTY"
+    call terminal_destroy(term)
     call renderer_destroy(ren)
     call window_destroy(win)
     stop 1
   end if
-
-  print *, "PTY opened successfully"
-  print *, "Terminal size:", term_cols, "x", term_rows
 
   ! Main event loop
   do while (.not. window_should_close(win) .and. pty_is_alive(pty))
@@ -76,38 +84,57 @@ program fortty
       ! Update projection matrix
       call renderer_set_projection(ren, win_width, win_height)
 
-      ! Calculate new terminal size and notify PTY
+      ! Calculate new terminal size and notify PTY and terminal
       new_cols = win_width / CELL_WIDTH
       new_rows = win_height / CELL_HEIGHT
       if (new_cols /= term_cols .or. new_rows /= term_rows) then
         term_cols = new_cols
         term_rows = new_rows
         call pty_resize(pty, term_rows, term_cols)
+        call terminal_resize(term, term_rows, term_cols)
       end if
     end if
 
     ! Read from PTY (non-blocking)
     nbytes = pty_read(pty, pty_buffer, 4096)
     if (nbytes > 0) then
-      ! For now, just print to stdout (Phase 4 will render to screen)
-      write(*,'(A)', advance='no') pty_buffer(1:nbytes)
+      ! Process each byte through terminal state machine
+      do i = 1, nbytes
+        call terminal_put_char(term, ichar(pty_buffer(i:i)))
+      end do
     end if
 
     ! Clear screen with dark gray background
     call glClearColor(0.1, 0.1, 0.12, 1.0)
     call glClear(GL_COLOR_BUFFER_BIT)
 
-    ! Begin new frame
+    ! Render terminal buffer
     call renderer_begin(ren)
 
-    ! Draw status text
-    call renderer_draw_string(ren, 10.0, 30.0, "fortty - Shell connected", &
-                              0.0, 1.0, 0.0, 1.0)
+    scr => terminal_active_screen(term)
 
-    call renderer_draw_string(ren, 10.0, 60.0, "(Shell output goes to stdout for now)", &
-                              0.5, 0.5, 0.5, 1.0)
+    do row = 1, scr%rows
+      y = real(row) * CELL_HEIGHT
+      do col = 1, scr%cols
+        cell = screen_get_cell(scr, row, col)
+        ! Only draw non-space characters
+        if (cell%codepoint /= 32) then
+          x = real(col - 1) * CELL_WIDTH
+          ! Convert color to 0-1 range
+          r = real(cell%fg%r) / 255.0
+          g = real(cell%fg%g) / 255.0
+          b = real(cell%fg%b) / 255.0
+          call renderer_draw_char(ren, x, y, cell%codepoint, r, g, b, 1.0)
+        end if
+      end do
+    end do
 
-    ! Flush to GPU
+    ! Draw cursor (simple block for now)
+    x = real(term%cursor%col - 1) * CELL_WIDTH
+    y = real(term%cursor%row) * CELL_HEIGHT
+    ! Draw cursor as underscore character for visibility
+    call renderer_draw_char(ren, x, y, 95, 0.7, 0.7, 0.7, 1.0)  ! '_'
+
     call renderer_flush(ren)
 
     ! Swap buffers and poll events
@@ -115,11 +142,9 @@ program fortty
     call window_poll_events()
   end do
 
-  print *, ""
-  print *, "Shell exited or window closed"
-
   ! Cleanup
   call pty_close(pty)
+  call terminal_destroy(term)
   call renderer_destroy(ren)
   call window_destroy(win)
 

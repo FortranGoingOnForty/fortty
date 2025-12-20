@@ -38,6 +38,10 @@ set(FORTRAN_SOURCES
     src/text/font.f90
     src/text/atlas.f90
     src/text/renderer.f90
+    src/terminal/cell.f90
+    src/terminal/screen.f90
+    src/terminal/cursor.f90
+    src/terminal/terminal.f90
     src/pty/pty_bindings.f90
     src/pty/pty.f90
     src/window/glfw_bindings.f90
