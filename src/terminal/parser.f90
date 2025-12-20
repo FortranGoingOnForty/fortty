@@ -377,6 +377,23 @@ contains
           call terminal_set_scroll_region(term, n, m)
         end if
 
+      case (99)  ! 'c' - DA1 (Primary Device Attributes)
+        ! Respond with VT102 identification: ESC [ ? 6 c
+        if (p%param_count == 0 .or. (p%param_count == 1 .and. p%params(1) == 0)) then
+          call terminal_queue_response(term, char(27) // '[?6c')
+        end if
+
+      case (110)  ! 'n' - DSR (Device Status Report)
+        if (n == 5) then
+          ! Status report: respond "OK" (CSI 0 n)
+          call terminal_queue_response(term, char(27) // '[0n')
+        else if (n == 6) then
+          ! Cursor position report: respond CSI row ; col R
+          call terminal_queue_response(term, char(27) // '[' // &
+            trim(int_to_str(term%cursor%row)) // ';' // &
+            trim(int_to_str(term%cursor%col)) // 'R')
+        end if
+
       case (115)  ! 's' - SCOSC (save cursor position)
         call terminal_save_cursor(term)
 
@@ -588,5 +605,13 @@ contains
       i = i + 1
     end do
   end subroutine dispatch_sgr
+
+  ! Convert integer to string
+  function int_to_str(n) result(str)
+    integer, intent(in) :: n
+    character(len=12) :: str
+
+    write(str, '(I0)') n
+  end function int_to_str
 
 end module parser_mod

@@ -22,6 +22,9 @@ module terminal_mod
   public :: terminal_switch_screen, terminal_active_screen
   public :: terminal_scroll_view, terminal_get_scroll_offset, terminal_reset_scroll_view
   public :: terminal_get_scrollback_count, terminal_get_scrollback_line
+  public :: terminal_queue_response, terminal_get_response, terminal_has_response
+
+  integer, parameter :: RESPONSE_BUFFER_SIZE = 256
 
   type :: terminal_t
     type(screen_t) :: screen          ! Primary screen buffer
@@ -47,6 +50,10 @@ module terminal_mod
 
     ! Tab stops
     logical, allocatable :: tabstops(:)
+
+    ! Response buffer for escape sequence replies (e.g., DA1)
+    character(len=RESPONSE_BUFFER_SIZE) :: response = ''
+    integer :: response_len = 0
   end type terminal_t
 
 contains
@@ -656,5 +663,38 @@ contains
 
     call scrollback_get_line(term%scrollback, offset, line, cols)
   end subroutine terminal_get_scrollback_line
+
+  ! Queue a response to be sent back to the PTY
+  subroutine terminal_queue_response(term, response)
+    type(terminal_t), intent(inout) :: term
+    character(len=*), intent(in) :: response
+    integer :: len_resp
+
+    len_resp = len_trim(response)
+    if (len_resp > 0 .and. len_resp <= RESPONSE_BUFFER_SIZE) then
+      term%response = response
+      term%response_len = len_resp
+    end if
+  end subroutine terminal_queue_response
+
+  ! Check if there's a pending response
+  function terminal_has_response(term) result(has)
+    type(terminal_t), intent(in) :: term
+    logical :: has
+
+    has = (term%response_len > 0)
+  end function terminal_has_response
+
+  ! Get and clear the pending response
+  subroutine terminal_get_response(term, response, length)
+    type(terminal_t), intent(inout) :: term
+    character(len=*), intent(out) :: response
+    integer, intent(out) :: length
+
+    response = term%response
+    length = term%response_len
+    term%response = ''
+    term%response_len = 0
+  end subroutine terminal_get_response
 
 end module terminal_mod
