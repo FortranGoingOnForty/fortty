@@ -42,6 +42,7 @@ set(FORTRAN_SOURCES
     src/terminal/screen.f90
     src/terminal/cursor.f90
     src/terminal/terminal.f90
+    src/terminal/parser.f90
     src/pty/pty_bindings.f90
     src/pty/pty.f90
     src/window/glfw_bindings.f90

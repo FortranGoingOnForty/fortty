@@ -6,13 +6,18 @@ module terminal_mod
   private
 
   public :: terminal_t
-  public :: terminal_init, terminal_destroy, terminal_resize
+  public :: terminal_init, terminal_destroy, terminal_resize, terminal_reset
   public :: terminal_put_char, terminal_newline, terminal_carriage_return
   public :: terminal_tab, terminal_backspace
   public :: terminal_scroll_up, terminal_scroll_down
   public :: terminal_erase_display, terminal_erase_line
   public :: terminal_cursor_move, terminal_cursor_up, terminal_cursor_down
   public :: terminal_cursor_forward, terminal_cursor_backward
+  public :: terminal_save_cursor, terminal_restore_cursor
+  public :: terminal_set_scroll_region
+  public :: terminal_insert_lines, terminal_delete_lines
+  public :: terminal_insert_chars, terminal_delete_chars
+  public :: terminal_index, terminal_reverse_index
   public :: terminal_switch_screen, terminal_active_screen
 
   type :: terminal_t
@@ -384,5 +389,202 @@ contains
       call screen_mark_all_dirty(term%screen)
     end if
   end subroutine terminal_switch_screen
+
+  ! Save cursor position and attributes (DECSC)
+  subroutine terminal_save_cursor(term)
+    type(terminal_t), intent(inout) :: term
+
+    term%saved_cursor = term%cursor
+  end subroutine terminal_save_cursor
+
+  ! Restore cursor position and attributes (DECRC)
+  subroutine terminal_restore_cursor(term)
+    type(terminal_t), intent(inout) :: term
+
+    term%cursor = term%saved_cursor
+    ! Clamp to current screen bounds
+    term%cursor%row = max(1, min(term%cursor%row, term%rows))
+    term%cursor%col = max(1, min(term%cursor%col, term%cols))
+  end subroutine terminal_restore_cursor
+
+  ! Set scroll region (DECSTBM)
+  subroutine terminal_set_scroll_region(term, top, bottom)
+    type(terminal_t), intent(inout) :: term
+    integer, intent(in) :: top, bottom
+
+    if (top < bottom .and. top >= 1 .and. bottom <= term%rows) then
+      term%scroll_top = top
+      term%scroll_bottom = bottom
+      ! Move cursor to home position
+      if (term%mode_origin) then
+        term%cursor%row = top
+      else
+        term%cursor%row = 1
+      end if
+      term%cursor%col = 1
+    end if
+  end subroutine terminal_set_scroll_region
+
+  ! Insert n blank lines at cursor (IL)
+  subroutine terminal_insert_lines(term, n)
+    type(terminal_t), intent(inout) :: term
+    integer, intent(in) :: n
+    type(screen_t), pointer :: scr
+    integer :: row, col, src_row, actual_n
+
+    ! Only works within scroll region
+    if (term%cursor%row < term%scroll_top .or. term%cursor%row > term%scroll_bottom) return
+
+    scr => terminal_active_screen(term)
+    actual_n = min(n, term%scroll_bottom - term%cursor%row + 1)
+
+    ! Move lines down (iterate in reverse)
+    do row = term%scroll_bottom, term%cursor%row + actual_n, -1
+      src_row = row - actual_n
+      do col = 1, term%cols
+        scr%cells(row, col) = scr%cells(src_row, col)
+      end do
+      call screen_mark_dirty(scr, row)
+    end do
+
+    ! Clear new lines at cursor position
+    do row = term%cursor%row, term%cursor%row + actual_n - 1
+      call screen_clear_line(scr, row)
+    end do
+  end subroutine terminal_insert_lines
+
+  ! Delete n lines at cursor (DL)
+  subroutine terminal_delete_lines(term, n)
+    type(terminal_t), intent(inout) :: term
+    integer, intent(in) :: n
+    type(screen_t), pointer :: scr
+    integer :: row, col, src_row, actual_n
+
+    ! Only works within scroll region
+    if (term%cursor%row < term%scroll_top .or. term%cursor%row > term%scroll_bottom) return
+
+    scr => terminal_active_screen(term)
+    actual_n = min(n, term%scroll_bottom - term%cursor%row + 1)
+
+    ! Move lines up
+    do row = term%cursor%row, term%scroll_bottom - actual_n
+      src_row = row + actual_n
+      do col = 1, term%cols
+        scr%cells(row, col) = scr%cells(src_row, col)
+      end do
+      call screen_mark_dirty(scr, row)
+    end do
+
+    ! Clear lines at bottom of scroll region
+    do row = term%scroll_bottom - actual_n + 1, term%scroll_bottom
+      call screen_clear_line(scr, row)
+    end do
+  end subroutine terminal_delete_lines
+
+  ! Insert n blank characters at cursor (ICH)
+  subroutine terminal_insert_chars(term, n)
+    type(terminal_t), intent(inout) :: term
+    integer, intent(in) :: n
+    type(screen_t), pointer :: scr
+    integer :: col, src_col, actual_n
+
+    scr => terminal_active_screen(term)
+    actual_n = min(n, term%cols - term%cursor%col + 1)
+
+    ! Shift characters right
+    do col = term%cols, term%cursor%col + actual_n, -1
+      src_col = col - actual_n
+      scr%cells(term%cursor%row, col) = scr%cells(term%cursor%row, src_col)
+    end do
+
+    ! Clear inserted positions
+    do col = term%cursor%col, term%cursor%col + actual_n - 1
+      scr%cells(term%cursor%row, col) = cell_t(32, default_fg, default_bg, 0)
+    end do
+
+    call screen_mark_dirty(scr, term%cursor%row)
+  end subroutine terminal_insert_chars
+
+  ! Delete n characters at cursor (DCH)
+  subroutine terminal_delete_chars(term, n)
+    type(terminal_t), intent(inout) :: term
+    integer, intent(in) :: n
+    type(screen_t), pointer :: scr
+    integer :: col, src_col, actual_n
+
+    scr => terminal_active_screen(term)
+    actual_n = min(n, term%cols - term%cursor%col + 1)
+
+    ! Shift characters left
+    do col = term%cursor%col, term%cols - actual_n
+      src_col = col + actual_n
+      scr%cells(term%cursor%row, col) = scr%cells(term%cursor%row, src_col)
+    end do
+
+    ! Clear vacated positions at end
+    do col = term%cols - actual_n + 1, term%cols
+      scr%cells(term%cursor%row, col) = cell_t(32, default_fg, default_bg, 0)
+    end do
+
+    call screen_mark_dirty(scr, term%cursor%row)
+  end subroutine terminal_delete_chars
+
+  ! Index - move cursor down, scroll if at bottom (IND)
+  subroutine terminal_index(term)
+    type(terminal_t), intent(inout) :: term
+
+    if (term%cursor%row >= term%scroll_bottom) then
+      call terminal_scroll_up(term, 1)
+    else
+      term%cursor%row = term%cursor%row + 1
+    end if
+  end subroutine terminal_index
+
+  ! Reverse index - move cursor up, scroll if at top (RI)
+  subroutine terminal_reverse_index(term)
+    type(terminal_t), intent(inout) :: term
+
+    if (term%cursor%row <= term%scroll_top) then
+      call terminal_scroll_down(term, 1)
+    else
+      term%cursor%row = term%cursor%row - 1
+    end if
+  end subroutine terminal_reverse_index
+
+  ! Reset terminal to initial state (RIS)
+  subroutine terminal_reset(term)
+    type(terminal_t), intent(inout) :: term
+    integer :: i
+
+    ! Reset scroll region
+    term%scroll_top = 1
+    term%scroll_bottom = term%rows
+
+    ! Reset modes
+    term%mode_autowrap = .true.
+    term%mode_origin = .false.
+    term%mode_insert = .false.
+
+    ! Reset cursor
+    term%cursor%row = 1
+    term%cursor%col = 1
+    term%cursor%fg = default_fg
+    term%cursor%bg = default_bg
+    term%cursor%attrs = 0
+    term%cursor%visible = .true.
+
+    ! Clear screen
+    call screen_clear(term%screen)
+    call screen_clear(term%alt_screen)
+
+    ! Switch to primary screen
+    term%using_alt = .false.
+
+    ! Reset tab stops
+    term%tabstops = .false.
+    do i = 1, term%cols, 8
+      term%tabstops(i) = .true.
+    end do
+  end subroutine terminal_reset
 
 end module terminal_mod
