@@ -4,13 +4,14 @@ module window_mod
   use glfw_bindings
   use gl_bindings
   use pty_mod
+  use terminal_mod
   implicit none
   private
 
   public :: window_t
   public :: window_create, window_destroy
   public :: window_should_close, window_swap_buffers, window_poll_events
-  public :: window_get_size, window_set_pty
+  public :: window_get_size, window_set_pty, window_set_terminal
 
   type :: window_t
     type(c_ptr) :: handle = c_null_ptr
@@ -25,6 +26,9 @@ module window_mod
 
   ! Module-level PTY pointer for keyboard input
   type(pty_t), pointer, save :: active_pty => null()
+
+  ! Module-level terminal pointer for scrollback
+  type(terminal_t), pointer, save :: active_term => null()
 
   ! Interface to C helper for loading OpenGL
   interface
@@ -94,6 +98,7 @@ contains
     dummy = glfwSetFramebufferSizeCallback(win%handle, c_funloc(framebuffer_size_callback))
     dummy = glfwSetKeyCallback(win%handle, c_funloc(key_callback))
     dummy = glfwSetCharCallback(win%handle, c_funloc(char_callback))
+    dummy = glfwSetScrollCallback(win%handle, c_funloc(scroll_callback))
 
   end function window_create
 
@@ -151,6 +156,13 @@ contains
     active_pty => p
   end subroutine window_set_pty
 
+  ! Set terminal for scrollback control
+  subroutine window_set_terminal(t)
+    type(terminal_t), target, intent(in) :: t
+
+    active_term => t
+  end subroutine window_set_terminal
+
   ! Callback: handle key presses (special keys and Ctrl combinations)
   subroutine key_callback(window, key, scancode, action, mods) bind(C)
     type(c_ptr), value :: window
@@ -168,6 +180,22 @@ contains
     if (key == GLFW_KEY_ESCAPE .and. action == GLFW_PRESS) then
       call glfwSetWindowShouldClose(window, GLFW_TRUE)
       return
+    end if
+
+    ! Handle Shift+PageUp/Down for scrollback (before resetting scroll)
+    if (associated(active_term) .and. iand(mods, GLFW_MOD_SHIFT) /= 0) then
+      if (key == GLFW_KEY_PAGE_UP) then
+        call terminal_scroll_view(active_term, active_term%rows)
+        return
+      else if (key == GLFW_KEY_PAGE_DOWN) then
+        call terminal_scroll_view(active_term, -active_term%rows)
+        return
+      end if
+    end if
+
+    ! Reset scroll view on any other key input (return to live view)
+    if (associated(active_term)) then
+      call terminal_reset_scroll_view(active_term)
     end if
 
     ! Handle Ctrl combinations (these don't trigger char_callback)
@@ -401,5 +429,20 @@ contains
 
     print *, "GLFW Error ", error_code
   end subroutine error_callback
+
+  ! Callback: handle mouse scroll wheel
+  subroutine scroll_callback(window, xoffset, yoffset) bind(C)
+    type(c_ptr), value :: window
+    real(c_double), value :: xoffset, yoffset
+    integer :: scroll_lines
+
+    if (.not. associated(active_term)) return
+
+    ! Convert scroll amount to lines (typically 3 lines per notch)
+    scroll_lines = nint(yoffset * 3.0d0)
+
+    ! Positive yoffset = scroll up (back in history)
+    call terminal_scroll_view(active_term, scroll_lines)
+  end subroutine scroll_callback
 
 end module window_mod

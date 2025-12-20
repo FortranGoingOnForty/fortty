@@ -2,6 +2,7 @@ module terminal_mod
   use cell_mod
   use screen_mod
   use cursor_mod
+  use scrollback_mod
   implicit none
   private
 
@@ -19,6 +20,8 @@ module terminal_mod
   public :: terminal_insert_chars, terminal_delete_chars
   public :: terminal_index, terminal_reverse_index
   public :: terminal_switch_screen, terminal_active_screen
+  public :: terminal_scroll_view, terminal_get_scroll_offset, terminal_reset_scroll_view
+  public :: terminal_get_scrollback_count, terminal_get_scrollback_line
 
   type :: terminal_t
     type(screen_t) :: screen          ! Primary screen buffer
@@ -32,6 +35,10 @@ module terminal_mod
     integer :: cols = 80              ! Terminal columns
     integer :: scroll_top = 1         ! Scroll region top
     integer :: scroll_bottom = 24     ! Scroll region bottom
+
+    ! Scrollback buffer (for primary screen only)
+    type(scrollback_t) :: scrollback
+    integer :: scroll_offset = 0      ! View offset into scrollback (0 = live view)
 
     ! Mode flags
     logical :: mode_autowrap = .true.   ! Auto-wrap at end of line
@@ -54,10 +61,14 @@ contains
     term%cols = cols
     term%scroll_top = 1
     term%scroll_bottom = rows
+    term%scroll_offset = 0
 
     ! Initialize both screen buffers
     call screen_init(term%screen, rows, cols)
     call screen_init(term%alt_screen, rows, cols)
+
+    ! Initialize scrollback buffer
+    call scrollback_init(term%scrollback, cols)
 
     ! Initialize cursor with default colors
     term%cursor%row = 1
@@ -80,6 +91,7 @@ contains
 
     call screen_destroy(term%screen)
     call screen_destroy(term%alt_screen)
+    call scrollback_destroy(term%scrollback)
     if (allocated(term%tabstops)) deallocate(term%tabstops)
   end subroutine terminal_destroy
 
@@ -223,9 +235,17 @@ contains
     type(terminal_t), intent(inout) :: term
     integer, intent(in) :: n
     type(screen_t), pointer :: scr
-    integer :: row, col, src_row
+    integer :: row, col, src_row, i
 
     scr => terminal_active_screen(term)
+
+    ! Save lines to scrollback before they're lost (primary screen only)
+    ! Only save if scrolling from the very top of the screen
+    if (.not. term%using_alt .and. term%scroll_top == 1) then
+      do i = 1, min(n, term%scroll_bottom)
+        call scrollback_push_line(term%scrollback, scr%cells(i, :), term%cols)
+      end do
+    end if
 
     ! Move lines up
     do row = term%scroll_top, term%scroll_bottom - n
@@ -586,5 +606,55 @@ contains
       term%tabstops(i) = .true.
     end do
   end subroutine terminal_reset
+
+  ! Scroll view into scrollback history
+  ! Positive delta = scroll up (back in history)
+  ! Negative delta = scroll down (toward present)
+  subroutine terminal_scroll_view(term, delta)
+    type(terminal_t), intent(inout) :: term
+    integer, intent(in) :: delta
+    integer :: max_offset
+
+    ! Don't scroll on alternate screen
+    if (term%using_alt) return
+
+    max_offset = scrollback_count(term%scrollback)
+    term%scroll_offset = term%scroll_offset + delta
+    term%scroll_offset = max(0, min(term%scroll_offset, max_offset))
+  end subroutine terminal_scroll_view
+
+  ! Get current scroll offset
+  function terminal_get_scroll_offset(term) result(offset)
+    type(terminal_t), intent(in) :: term
+    integer :: offset
+
+    offset = term%scroll_offset
+  end function terminal_get_scroll_offset
+
+  ! Reset scroll view to live (current) output
+  subroutine terminal_reset_scroll_view(term)
+    type(terminal_t), intent(inout) :: term
+
+    term%scroll_offset = 0
+  end subroutine terminal_reset_scroll_view
+
+  ! Get number of lines in scrollback
+  function terminal_get_scrollback_count(term) result(n)
+    type(terminal_t), intent(in) :: term
+    integer :: n
+
+    n = scrollback_count(term%scrollback)
+  end function terminal_get_scrollback_count
+
+  ! Get a line from scrollback
+  ! offset: 0 = most recent line, 1 = second most recent, etc.
+  subroutine terminal_get_scrollback_line(term, offset, line, cols)
+    type(terminal_t), intent(in) :: term
+    integer, intent(in) :: offset
+    type(cell_t), intent(out) :: line(:)
+    integer, intent(in) :: cols
+
+    call scrollback_get_line(term%scrollback, offset, line, cols)
+  end subroutine terminal_get_scrollback_line
 
 end module terminal_mod

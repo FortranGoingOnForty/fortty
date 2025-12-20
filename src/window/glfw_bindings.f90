@@ -109,6 +109,12 @@ module glfw_bindings
       type(c_ptr), value :: window
       integer(c_int), value :: codepoint
     end subroutine glfw_char_callback
+
+    subroutine glfw_scroll_callback(window, xoffset, yoffset) bind(C)
+      import :: c_ptr, c_double
+      type(c_ptr), value :: window
+      real(c_double), value :: xoffset, yoffset
+    end subroutine glfw_scroll_callback
   end interface
 
   interface
@@ -203,6 +209,14 @@ module glfw_bindings
       type(c_ptr), value :: window
       type(c_funptr), value :: callback
     end function glfwSetCharCallback
+
+    ! GLFWscrollfun glfwSetScrollCallback(GLFWwindow* window, GLFWscrollfun callback)
+    type(c_funptr) function glfwSetScrollCallback(window, callback) &
+        bind(C, name="glfwSetScrollCallback")
+      import :: c_ptr, c_funptr
+      type(c_ptr), value :: window
+      type(c_funptr), value :: callback
+    end function glfwSetScrollCallback
 
     ! GLFWerrorfun glfwSetErrorCallback(GLFWerrorfun callback)
     type(c_funptr) function glfwSetErrorCallback(callback) &
