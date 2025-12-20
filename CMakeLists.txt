@@ -15,6 +15,12 @@ find_package(glfw3 REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(Freetype REQUIRED)
 
+# Optional: fontconfig for portable font discovery
+find_package(PkgConfig)
+if(PkgConfig_FOUND)
+    pkg_check_modules(FONTCONFIG fontconfig)
+endif()
+
 # C helper libraries (GLAD + FreeType + PTY wrappers)
 add_library(helpers STATIC
     src/gl/glad.c
@@ -25,6 +31,16 @@ add_library(helpers STATIC
 target_include_directories(helpers PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_include_directories(helpers PRIVATE ${FREETYPE_INCLUDE_DIRS})
 target_link_libraries(helpers PRIVATE glfw ${FREETYPE_LIBRARIES} util)
+
+# Link fontconfig if available
+if(FONTCONFIG_FOUND)
+    target_compile_definitions(helpers PRIVATE HAVE_FONTCONFIG)
+    target_include_directories(helpers PRIVATE ${FONTCONFIG_INCLUDE_DIRS})
+    target_link_libraries(helpers PRIVATE ${FONTCONFIG_LIBRARIES})
+    message(STATUS "Fontconfig found - enabling portable font discovery")
+else()
+    message(STATUS "Fontconfig not found - using hardcoded font paths")
+endif()
 
 # Fortran module output directory
 set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/modules)
@@ -41,6 +57,7 @@ set(FORTRAN_SOURCES
     src/terminal/cell.f90
     src/terminal/screen.f90
     src/terminal/cursor.f90
+    src/terminal/scrollback.f90
     src/terminal/terminal.f90
     src/terminal/parser.f90
     src/pty/pty_bindings.f90

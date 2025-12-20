@@ -11,7 +11,7 @@ module renderer_mod
   public :: renderer_t
   public :: renderer_create, renderer_destroy
   public :: renderer_begin, renderer_draw_char, renderer_draw_string, renderer_flush
-  public :: renderer_set_projection
+  public :: renderer_set_projection, renderer_load_fallback_font
 
   ! Vertex format: position(2) + texcoord(2) + color(4) = 8 floats per vertex
   integer, parameter :: FLOATS_PER_VERTEX = 8
@@ -327,5 +327,14 @@ contains
     r%vertex_count = 0
 
   end subroutine renderer_flush
+
+  ! Load a fallback font for missing glyphs
+  subroutine renderer_load_fallback_font(r, font_path)
+    type(renderer_t), intent(inout) :: r
+    character(len=*), intent(in) :: font_path
+
+    if (.not. r%initialized) return
+    call font_load_fallback(r%font, font_path)
+  end subroutine renderer_load_fallback_font
 
 end module renderer_mod

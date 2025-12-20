@@ -9,9 +9,17 @@ module atlas_mod
   public :: atlas_t
   public :: atlas_create, atlas_destroy, atlas_get_glyph
 
-  integer, parameter :: ATLAS_SIZE = 512
+  integer, parameter :: ATLAS_SIZE = 1024  ! Larger for Unicode support
   integer, parameter :: ASCII_START = 32
   integer, parameter :: ASCII_END = 126
+  integer, parameter :: EXTENDED_CACHE_SIZE = 256  ! Cache for non-ASCII glyphs
+
+  ! Entry for extended glyph cache (simple hash table)
+  type :: cache_entry_t
+    integer :: codepoint = 0
+    type(glyph_t) :: glyph
+    logical :: used = .false.
+  end type cache_entry_t
 
   type :: atlas_t
     integer :: texture_id = 0
@@ -20,7 +28,9 @@ module atlas_mod
     integer :: cursor_x = 0
     integer :: cursor_y = 0
     integer :: row_height = 0
-    type(glyph_t) :: glyphs(0:127)
+    type(glyph_t) :: glyphs(0:127)              ! ASCII cache
+    type(cache_entry_t) :: extended(EXTENDED_CACHE_SIZE)  ! Extended glyph cache
+    type(font_t), pointer :: font => null()     ! Reference for on-demand loading
     logical :: initialized = .false.
   end type atlas_t
 
@@ -28,10 +38,10 @@ contains
 
   ! Create a texture atlas from a font, pre-rendering ASCII characters
   function atlas_create(font) result(atlas)
-    type(font_t), intent(inout) :: font
+    type(font_t), intent(inout), target :: font
     type(atlas_t) :: atlas
     integer :: tex(1)
-    integer :: cp
+    integer :: cp, i
     type(glyph_t) :: g
     type(c_ptr) :: bitmap_ptr
 
@@ -39,6 +49,9 @@ contains
       print *, "Error: Cannot create atlas from unloaded font"
       return
     end if
+
+    ! Store font reference for on-demand glyph loading
+    atlas%font => font
 
     ! Create OpenGL texture
     call glGenTextures(1, tex)
@@ -62,6 +75,13 @@ contains
     ! Initialize glyph array
     do cp = 0, 127
       call glyph_init(atlas%glyphs(cp))
+    end do
+
+    ! Initialize extended cache
+    do i = 1, EXTENDED_CACHE_SIZE
+      atlas%extended(i)%used = .false.
+      atlas%extended(i)%codepoint = 0
+      call glyph_init(atlas%extended(i)%glyph)
     end do
 
     ! Pre-render ASCII printable characters (32-126)
@@ -130,19 +150,83 @@ contains
 
   end subroutine atlas_add_glyph
 
-  ! Get glyph information for a codepoint
+  ! Get glyph information for a codepoint (with on-demand loading for non-ASCII)
   function atlas_get_glyph(atlas, codepoint) result(g)
-    type(atlas_t), intent(in) :: atlas
+    type(atlas_t), intent(inout) :: atlas
     integer, intent(in) :: codepoint
     type(glyph_t) :: g
 
     if (codepoint >= 0 .and. codepoint <= 127) then
       g = atlas%glyphs(codepoint)
     else
-      ! Return invalid glyph for unsupported characters
-      call glyph_init(g)
+      ! Look up or load extended glyph
+      g = atlas_get_extended_glyph(atlas, codepoint)
     end if
   end function atlas_get_glyph
+
+  ! Get or load an extended (non-ASCII) glyph
+  function atlas_get_extended_glyph(atlas, codepoint) result(g)
+    type(atlas_t), intent(inout) :: atlas
+    integer, intent(in) :: codepoint
+    type(glyph_t) :: g
+    integer :: hash_idx, probe, i
+    type(c_ptr) :: bitmap_ptr
+    logical :: used_fallback
+
+    call glyph_init(g)
+
+    ! Simple hash function
+    hash_idx = mod(codepoint, EXTENDED_CACHE_SIZE) + 1
+
+    ! Linear probe to find existing or empty slot
+    do i = 0, EXTENDED_CACHE_SIZE - 1
+      probe = mod(hash_idx + i - 1, EXTENDED_CACHE_SIZE) + 1
+
+      if (.not. atlas%extended(probe)%used) then
+        ! Empty slot - load glyph here
+        call atlas_load_extended_glyph(atlas, codepoint, probe)
+        g = atlas%extended(probe)%glyph
+        return
+      else if (atlas%extended(probe)%codepoint == codepoint) then
+        ! Found cached glyph
+        g = atlas%extended(probe)%glyph
+        return
+      end if
+    end do
+
+    ! Cache is full - just render without caching (fallback behavior)
+    if (associated(atlas%font)) then
+      g = font_render_glyph_with_fallback(atlas%font, codepoint, bitmap_ptr, used_fallback)
+    end if
+
+  end function atlas_get_extended_glyph
+
+  ! Load an extended glyph into the cache at specified slot
+  subroutine atlas_load_extended_glyph(atlas, codepoint, slot)
+    type(atlas_t), intent(inout) :: atlas
+    integer, intent(in) :: codepoint, slot
+    type(glyph_t) :: g
+    type(c_ptr) :: bitmap_ptr
+    logical :: used_fallback
+
+    if (.not. associated(atlas%font)) return
+
+    ! Render using fallback support
+    g = font_render_glyph_with_fallback(atlas%font, codepoint, bitmap_ptr, used_fallback)
+
+    if (g%valid) then
+      ! Bind texture and add glyph
+      call glBindTexture(GL_TEXTURE_2D, atlas%texture_id)
+      call atlas_add_glyph(atlas, g, bitmap_ptr)
+      call glBindTexture(GL_TEXTURE_2D, 0)
+
+      ! Store in cache
+      atlas%extended(slot)%codepoint = codepoint
+      atlas%extended(slot)%glyph = g
+      atlas%extended(slot)%used = .true.
+    end if
+
+  end subroutine atlas_load_extended_glyph
 
   ! Destroy atlas and free texture
   subroutine atlas_destroy(atlas)

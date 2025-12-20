@@ -99,3 +99,111 @@ int fortty_ft_get_glyph_size(FT_Face face, unsigned int codepoint,
 
     return 0;
 }
+
+/* Check if a glyph exists in a font face
+ * Returns 1 if glyph exists, 0 if not
+ */
+int fortty_ft_has_glyph(FT_Face face, unsigned int codepoint) {
+    FT_UInt glyph_index = FT_Get_Char_Index(face, codepoint);
+    return (glyph_index != 0) ? 1 : 0;
+}
+
+/* Fontconfig support for portable font discovery */
+#ifdef HAVE_FONTCONFIG
+#include <fontconfig/fontconfig.h>
+
+/* Find a font that supports the given codepoint
+ * Returns 0 on success (path filled), non-zero on failure
+ */
+int fortty_fc_find_font_for_char(unsigned int codepoint, char *path, int path_size) {
+    FcPattern *pattern = NULL;
+    FcPattern *match = NULL;
+    FcResult result;
+    FcChar8 *file = NULL;
+    FcCharSet *charset = NULL;
+    int ret = 1;
+
+    if (!FcInit()) {
+        return 1;
+    }
+
+    /* Create charset with our target codepoint */
+    charset = FcCharSetCreate();
+    if (!charset) goto cleanup;
+    FcCharSetAddChar(charset, codepoint);
+
+    /* Create pattern requesting a font with this character */
+    pattern = FcPatternCreate();
+    if (!pattern) goto cleanup;
+    FcPatternAddCharSet(pattern, FC_CHARSET, charset);
+    FcPatternAddBool(pattern, FC_SCALABLE, FcTrue);  /* Only scalable fonts */
+
+    /* Configure pattern with default substitutions */
+    FcConfigSubstitute(NULL, pattern, FcMatchPattern);
+    FcDefaultSubstitute(pattern);
+
+    /* Find best matching font */
+    match = FcFontMatch(NULL, pattern, &result);
+    if (!match || result != FcResultMatch) goto cleanup;
+
+    /* Get the font file path */
+    if (FcPatternGetString(match, FC_FILE, 0, &file) != FcResultMatch) goto cleanup;
+
+    /* Copy path to output buffer */
+    if (strlen((char*)file) < (size_t)path_size) {
+        strcpy(path, (char*)file);
+        ret = 0;  /* Success */
+    }
+
+cleanup:
+    if (match) FcPatternDestroy(match);
+    if (pattern) FcPatternDestroy(pattern);
+    if (charset) FcCharSetDestroy(charset);
+    return ret;
+}
+
+/* Find a monospace font - useful for main terminal font */
+int fortty_fc_find_monospace_font(char *path, int path_size) {
+    FcPattern *pattern = NULL;
+    FcPattern *match = NULL;
+    FcResult result;
+    FcChar8 *file = NULL;
+    int ret = 1;
+
+    if (!FcInit()) {
+        return 1;
+    }
+
+    /* Request monospace font */
+    pattern = FcNameParse((FcChar8*)"monospace");
+    if (!pattern) goto cleanup;
+
+    FcConfigSubstitute(NULL, pattern, FcMatchPattern);
+    FcDefaultSubstitute(pattern);
+
+    match = FcFontMatch(NULL, pattern, &result);
+    if (!match || result != FcResultMatch) goto cleanup;
+
+    if (FcPatternGetString(match, FC_FILE, 0, &file) != FcResultMatch) goto cleanup;
+
+    if (strlen((char*)file) < (size_t)path_size) {
+        strcpy(path, (char*)file);
+        ret = 0;
+    }
+
+cleanup:
+    if (match) FcPatternDestroy(match);
+    if (pattern) FcPatternDestroy(pattern);
+    return ret;
+}
+#else
+/* Stub implementations when fontconfig is not available */
+int fortty_fc_find_font_for_char(unsigned int codepoint, char *path, int path_size) {
+    (void)codepoint; (void)path; (void)path_size;
+    return 1;  /* Not available */
+}
+int fortty_fc_find_monospace_font(char *path, int path_size) {
+    (void)path; (void)path_size;
+    return 1;  /* Not available */
+}
+#endif
