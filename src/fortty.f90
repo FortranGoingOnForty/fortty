@@ -7,7 +7,8 @@ program fortty
   use terminal_mod
   use parser_mod
   use screen_mod
-  use cell_mod
+  use cell_mod, only: cell_t, set_palette_color, set_default_colors
+  use config_mod
   implicit none
 
   type(window_t) :: win
@@ -17,40 +18,56 @@ program fortty
   type(parser_t) :: parser
   type(screen_t), pointer :: scr
   type(cell_t) :: cell
+  type(config_t) :: cfg
   integer :: win_width, win_height
   integer :: prev_width, prev_height
   integer :: term_rows, term_cols
   integer :: new_rows, new_cols
   character(len=256) :: font_path, fallback_path
   character(len=4096) :: pty_buffer
+  character(len=256) :: response_buf
   integer :: nbytes, i, row, col, scroll_offset, sb_offset, screen_row
-  real :: x, y, r, g, b
+  integer :: response_len
+  real :: x, y, r, g, b, bg_r, bg_g, bg_b
   type(cell_t), allocatable :: sb_line(:)
-  integer, parameter :: CELL_WIDTH = 10   ! Approximate char width
-  integer, parameter :: CELL_HEIGHT = 18  ! Approximate line height
+  integer :: cell_width, cell_height  ! From font metrics
 
-  ! Window dimensions
-  win_width = 800
-  win_height = 600
+  ! Load configuration (uses defaults if no config file found)
+  cfg = config_load('')
+
+  ! Apply color palette from config
+  call set_default_colors(cfg%fg_color, cfg%bg_color)
+  do i = 0, 15
+    call set_palette_color(i, cfg%palette(i))
+  end do
+
+  ! Window dimensions from config
+  win_width = cfg%window_width
+  win_height = cfg%window_height
 
   ! Create window with OpenGL context
   win = window_create(win_width, win_height, "fortty")
 
-  ! Font path - use fontconfig for portable discovery, with fallbacks
-  font_path = font_find_monospace()
-  if (len_trim(font_path) == 0) then
-    ! Fontconfig not available or failed - try common system locations
-    font_path = "/usr/share/fonts/TTF/DejaVuSansMono.ttf"
+  ! Font path - use config if specified, otherwise fontconfig, then fallbacks
+  if (len_trim(cfg%font_path) > 0) then
+    font_path = cfg%font_path
+    print *, "Using configured font: ", trim(font_path)
   else
-    print *, "Using system monospace font: ", trim(font_path)
+    font_path = font_find_monospace()
+    if (len_trim(font_path) == 0) then
+      ! Fontconfig not available or failed - try common system locations
+      font_path = "/usr/share/fonts/TTF/DejaVuSansMono.ttf"
+    else
+      print *, "Using system monospace font: ", trim(font_path)
+    end if
   end if
 
-  ! Create renderer with font
-  ren = renderer_create(trim(font_path), 16)
+  ! Create renderer with font (using font size from config)
+  ren = renderer_create(trim(font_path), cfg%font_size)
   if (.not. ren%initialized) then
     print *, "Warning: Could not load font, trying alternate path..."
     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
-    ren = renderer_create(trim(font_path), 16)
+    ren = renderer_create(trim(font_path), cfg%font_size)
   end if
 
   if (.not. ren%initialized) then
@@ -65,11 +82,21 @@ program fortty
   ren%atlas%font => ren%font
 
   ! Load fallback font for missing glyphs (icons, symbols, etc.)
-  ! First try fontconfig to find a font with Nerd Font icons (e.g., eza uses these)
-  ! Try Nerd Font-specific devicons first (U+E5FF), then common icons (U+F07B)
-  fallback_path = font_find_for_codepoint(int(z'E5FF'))  ! Nerd Font devicon
-  if (len_trim(fallback_path) > 0) then
-    call renderer_load_fallback_font(ren, trim(fallback_path))
+  ! Use config fallback if specified, otherwise auto-detect via fontconfig
+  if (len_trim(cfg%font_fallback) > 0) then
+    call renderer_load_fallback_font(ren, trim(cfg%font_fallback))
+    if (ren%font%has_fallback) then
+      print *, "Using configured fallback font: ", trim(cfg%font_fallback)
+    end if
+  end if
+
+  ! If no configured fallback or it failed, try fontconfig auto-detection
+  if (.not. ren%font%has_fallback) then
+    ! Try Nerd Font-specific devicons first (U+E5FF), then common icons (U+F07B)
+    fallback_path = font_find_for_codepoint(int(z'E5FF'))  ! Nerd Font devicon
+    if (len_trim(fallback_path) > 0) then
+      call renderer_load_fallback_font(ren, trim(fallback_path))
+    end if
   end if
   if (.not. ren%font%has_fallback) then
     fallback_path = font_find_for_codepoint(int(z'E0A0'))  ! Powerline branch symbol
@@ -112,9 +139,16 @@ program fortty
   ! Set up projection matrix
   call renderer_set_projection(ren, win_width, win_height)
 
+  ! Get cell dimensions from font metrics
+  cell_width = ren%font%cell_width
+  cell_height = ren%font%cell_height
+  if (cell_width < 1) cell_width = 10  ! Fallback
+  if (cell_height < 1) cell_height = 18  ! Fallback
+  print *, "Font cell size:", cell_width, "x", cell_height
+
   ! Calculate terminal dimensions based on font metrics
-  term_cols = win_width / CELL_WIDTH
-  term_rows = win_height / CELL_HEIGHT
+  term_cols = win_width / cell_width
+  term_rows = win_height / cell_height
   prev_width = win_width
   prev_height = win_height
 
@@ -149,8 +183,8 @@ program fortty
       call renderer_set_projection(ren, win_width, win_height)
 
       ! Calculate new terminal size and notify PTY and terminal
-      new_cols = win_width / CELL_WIDTH
-      new_rows = win_height / CELL_HEIGHT
+      new_cols = win_width / cell_width
+      new_rows = win_height / cell_height
       if (new_cols /= term_cols .or. new_rows /= term_rows) then
         term_cols = new_cols
         term_rows = new_rows
@@ -168,8 +202,19 @@ program fortty
       end do
     end if
 
-    ! Clear screen with dark gray background
-    call glClearColor(0.1, 0.1, 0.12, 1.0)
+    ! Check for terminal responses (DA1, DSR, etc.) and send to PTY
+    if (terminal_has_response(term)) then
+      call terminal_get_response(term, response_buf, response_len)
+      if (response_len > 0) then
+        call pty_write(pty, response_buf, response_len)
+      end if
+    end if
+
+    ! Clear screen with background color from config
+    bg_r = real(cfg%bg_color%r) / 255.0
+    bg_g = real(cfg%bg_color%g) / 255.0
+    bg_b = real(cfg%bg_color%b) / 255.0
+    call glClearColor(bg_r, bg_g, bg_b, 1.0)
     call glClear(GL_COLOR_BUFFER_BIT)
 
     ! Render terminal buffer
@@ -187,7 +232,7 @@ program fortty
     end if
 
     do row = 1, scr%rows
-      y = real(row) * CELL_HEIGHT
+      y = real(row) * cell_height
 
       ! Determine if this row shows scrollback or screen content
       sb_offset = scroll_offset - row + 1
@@ -198,7 +243,7 @@ program fortty
         do col = 1, min(term_cols, scr%cols)
           cell = sb_line(col)
           if (cell%codepoint /= 32) then
-            x = real(col - 1) * CELL_WIDTH
+            x = real(col - 1) * cell_width
             r = real(cell%fg%r) / 255.0
             g = real(cell%fg%g) / 255.0
             b = real(cell%fg%b) / 255.0
@@ -212,7 +257,7 @@ program fortty
           do col = 1, scr%cols
             cell = screen_get_cell(scr, screen_row, col)
             if (cell%codepoint /= 32) then
-              x = real(col - 1) * CELL_WIDTH
+              x = real(col - 1) * cell_width
               r = real(cell%fg%r) / 255.0
               g = real(cell%fg%g) / 255.0
               b = real(cell%fg%b) / 255.0
@@ -225,8 +270,8 @@ program fortty
 
     ! Draw cursor if visible (only when not scrolled back)
     if (term%cursor%visible .and. scroll_offset == 0) then
-      x = real(term%cursor%col - 1) * CELL_WIDTH
-      y = real(term%cursor%row) * CELL_HEIGHT
+      x = real(term%cursor%col - 1) * cell_width
+      y = real(term%cursor%row) * cell_height
       ! Draw cursor as underscore character for visibility
       call renderer_draw_char(ren, x, y, 95, 0.7, 0.7, 0.7, 1.0)  ! '_'
     end if

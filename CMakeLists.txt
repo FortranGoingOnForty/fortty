@@ -55,6 +55,8 @@ set(FORTRAN_SOURCES
     src/text/atlas.f90
     src/text/renderer.f90
     src/terminal/cell.f90
+    src/config/toml_parser.f90
+    src/config/config.f90
     src/terminal/screen.f90
     src/terminal/cursor.f90
     src/terminal/scrollback.f90
