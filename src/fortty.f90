@@ -4,6 +4,7 @@ program fortty
   use renderer_mod
   use pty_mod
   use terminal_mod
+  use parser_mod
   use screen_mod
   use cell_mod
   implicit none
@@ -12,6 +13,7 @@ program fortty
   type(renderer_t) :: ren
   type(pty_t) :: pty
   type(terminal_t) :: term
+  type(parser_t) :: parser
   type(screen_t), pointer :: scr
   type(cell_t) :: cell
   integer :: win_width, win_height
@@ -59,8 +61,9 @@ program fortty
   prev_width = win_width
   prev_height = win_height
 
-  ! Initialize terminal state
+  ! Initialize terminal state and parser
   call terminal_init(term, term_rows, term_cols)
+  call parser_init(parser)
 
   ! Open PTY with shell
   pty = pty_open("", term_rows, term_cols)  ! Empty string = use $SHELL
@@ -72,6 +75,9 @@ program fortty
     call window_destroy(win)
     stop 1
   end if
+
+  ! Connect PTY to window for keyboard input
+  call window_set_pty(pty)
 
   ! Main event loop
   do while (.not. window_should_close(win) .and. pty_is_alive(pty))
@@ -98,9 +104,9 @@ program fortty
     ! Read from PTY (non-blocking)
     nbytes = pty_read(pty, pty_buffer, 4096)
     if (nbytes > 0) then
-      ! Process each byte through terminal state machine
+      ! Process each byte through escape sequence parser
       do i = 1, nbytes
-        call terminal_put_char(term, ichar(pty_buffer(i:i)))
+        call parser_process_byte(parser, term, ichar(pty_buffer(i:i)))
       end do
     end if
 
@@ -129,11 +135,13 @@ program fortty
       end do
     end do
 
-    ! Draw cursor (simple block for now)
-    x = real(term%cursor%col - 1) * CELL_WIDTH
-    y = real(term%cursor%row) * CELL_HEIGHT
-    ! Draw cursor as underscore character for visibility
-    call renderer_draw_char(ren, x, y, 95, 0.7, 0.7, 0.7, 1.0)  ! '_'
+    ! Draw cursor if visible
+    if (term%cursor%visible) then
+      x = real(term%cursor%col - 1) * CELL_WIDTH
+      y = real(term%cursor%row) * CELL_HEIGHT
+      ! Draw cursor as underscore character for visibility
+      call renderer_draw_char(ren, x, y, 95, 0.7, 0.7, 0.7, 1.0)  ! '_'
+    end if
 
     call renderer_flush(ren)
 

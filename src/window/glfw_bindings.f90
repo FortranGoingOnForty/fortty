@@ -17,6 +17,67 @@ module glfw_bindings
 
   ! Key constants
   integer(c_int), parameter :: GLFW_KEY_ESCAPE = 256
+  integer(c_int), parameter :: GLFW_KEY_ENTER = 257
+  integer(c_int), parameter :: GLFW_KEY_TAB = 258
+  integer(c_int), parameter :: GLFW_KEY_BACKSPACE = 259
+  integer(c_int), parameter :: GLFW_KEY_INSERT = 260
+  integer(c_int), parameter :: GLFW_KEY_DELETE = 261
+  integer(c_int), parameter :: GLFW_KEY_RIGHT = 262
+  integer(c_int), parameter :: GLFW_KEY_LEFT = 263
+  integer(c_int), parameter :: GLFW_KEY_DOWN = 264
+  integer(c_int), parameter :: GLFW_KEY_UP = 265
+  integer(c_int), parameter :: GLFW_KEY_PAGE_UP = 266
+  integer(c_int), parameter :: GLFW_KEY_PAGE_DOWN = 267
+  integer(c_int), parameter :: GLFW_KEY_HOME = 268
+  integer(c_int), parameter :: GLFW_KEY_END = 269
+
+  ! Function keys
+  integer(c_int), parameter :: GLFW_KEY_F1 = 290
+  integer(c_int), parameter :: GLFW_KEY_F2 = 291
+  integer(c_int), parameter :: GLFW_KEY_F3 = 292
+  integer(c_int), parameter :: GLFW_KEY_F4 = 293
+  integer(c_int), parameter :: GLFW_KEY_F5 = 294
+  integer(c_int), parameter :: GLFW_KEY_F6 = 295
+  integer(c_int), parameter :: GLFW_KEY_F7 = 296
+  integer(c_int), parameter :: GLFW_KEY_F8 = 297
+  integer(c_int), parameter :: GLFW_KEY_F9 = 298
+  integer(c_int), parameter :: GLFW_KEY_F10 = 299
+  integer(c_int), parameter :: GLFW_KEY_F11 = 300
+  integer(c_int), parameter :: GLFW_KEY_F12 = 301
+
+  ! Letter keys (for Ctrl combinations)
+  integer(c_int), parameter :: GLFW_KEY_A = 65
+  integer(c_int), parameter :: GLFW_KEY_B = 66
+  integer(c_int), parameter :: GLFW_KEY_C = 67
+  integer(c_int), parameter :: GLFW_KEY_D = 68
+  integer(c_int), parameter :: GLFW_KEY_E = 69
+  integer(c_int), parameter :: GLFW_KEY_F = 70
+  integer(c_int), parameter :: GLFW_KEY_G = 71
+  integer(c_int), parameter :: GLFW_KEY_H = 72
+  integer(c_int), parameter :: GLFW_KEY_I = 73
+  integer(c_int), parameter :: GLFW_KEY_J = 74
+  integer(c_int), parameter :: GLFW_KEY_K = 75
+  integer(c_int), parameter :: GLFW_KEY_L = 76
+  integer(c_int), parameter :: GLFW_KEY_M = 77
+  integer(c_int), parameter :: GLFW_KEY_N = 78
+  integer(c_int), parameter :: GLFW_KEY_O = 79
+  integer(c_int), parameter :: GLFW_KEY_P = 80
+  integer(c_int), parameter :: GLFW_KEY_Q = 81
+  integer(c_int), parameter :: GLFW_KEY_R = 82
+  integer(c_int), parameter :: GLFW_KEY_S = 83
+  integer(c_int), parameter :: GLFW_KEY_T = 84
+  integer(c_int), parameter :: GLFW_KEY_U = 85
+  integer(c_int), parameter :: GLFW_KEY_V = 86
+  integer(c_int), parameter :: GLFW_KEY_W = 87
+  integer(c_int), parameter :: GLFW_KEY_X = 88
+  integer(c_int), parameter :: GLFW_KEY_Y = 89
+  integer(c_int), parameter :: GLFW_KEY_Z = 90
+
+  ! Modifier masks
+  integer(c_int), parameter :: GLFW_MOD_SHIFT = 1
+  integer(c_int), parameter :: GLFW_MOD_CONTROL = 2
+  integer(c_int), parameter :: GLFW_MOD_ALT = 4
+  integer(c_int), parameter :: GLFW_MOD_SUPER = 8
 
   ! Action constants
   integer(c_int), parameter :: GLFW_RELEASE = 0
@@ -42,6 +103,12 @@ module glfw_bindings
       integer(c_int), value :: error_code
       type(c_ptr), value :: description
     end subroutine glfw_error_callback
+
+    subroutine glfw_char_callback(window, codepoint) bind(C)
+      import :: c_ptr, c_int
+      type(c_ptr), value :: window
+      integer(c_int), value :: codepoint
+    end subroutine glfw_char_callback
   end interface
 
   interface
@@ -128,6 +195,14 @@ module glfw_bindings
       type(c_ptr), value :: window
       type(c_funptr), value :: callback
     end function glfwSetKeyCallback
+
+    ! GLFWcharfun glfwSetCharCallback(GLFWwindow* window, GLFWcharfun callback)
+    type(c_funptr) function glfwSetCharCallback(window, callback) &
+        bind(C, name="glfwSetCharCallback")
+      import :: c_ptr, c_funptr
+      type(c_ptr), value :: window
+      type(c_funptr), value :: callback
+    end function glfwSetCharCallback
 
     ! GLFWerrorfun glfwSetErrorCallback(GLFWerrorfun callback)
     type(c_funptr) function glfwSetErrorCallback(callback) &
