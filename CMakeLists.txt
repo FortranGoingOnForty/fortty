@@ -13,14 +13,17 @@ endif()
 # Find dependencies
 find_package(glfw3 REQUIRED)
 find_package(OpenGL REQUIRED)
+find_package(Freetype REQUIRED)
 
-# GLAD loader library (C) and helper functions
-add_library(glad STATIC
+# C helper libraries (GLAD + FreeType wrappers)
+add_library(helpers STATIC
     src/gl/glad.c
     c_src/gl_loader.c
+    c_src/freetype_helpers.c
 )
-target_include_directories(glad PUBLIC ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(glad PRIVATE glfw)
+target_include_directories(helpers PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(helpers PRIVATE ${FREETYPE_INCLUDE_DIRS})
+target_link_libraries(helpers PRIVATE glfw ${FREETYPE_LIBRARIES})
 
 # Fortran module output directory
 set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/modules)
@@ -29,6 +32,8 @@ set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/modules)
 set(FORTRAN_SOURCES
     src/core/types.f90
     src/gl/gl_bindings.f90
+    src/text/glyph.f90
+    src/text/font.f90
     src/window/glfw_bindings.f90
     src/window/window.f90
     src/fortty.f90
@@ -37,7 +42,7 @@ set(FORTRAN_SOURCES
 # Main executable
 add_executable(fortty ${FORTRAN_SOURCES})
 target_include_directories(fortty PRIVATE ${CMAKE_BINARY_DIR}/modules)
-target_link_libraries(fortty PRIVATE glad glfw OpenGL::GL)
+target_link_libraries(fortty PRIVATE helpers glfw OpenGL::GL ${FREETYPE_LIBRARIES})
 
 # For Linux, we need dl for GLAD's dlopen
 if(UNIX AND NOT APPLE)
