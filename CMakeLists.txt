@@ -82,6 +82,11 @@ add_executable(fortty ${FORTRAN_SOURCES})
 target_include_directories(fortty PRIVATE ${CMAKE_BINARY_DIR}/modules)
 target_link_libraries(fortty PRIVATE helpers glfw OpenGL::GL ${FREETYPE_LIBRARIES})
 
+# Add fontconfig link directory if available (needed for linker to find it)
+if(FONTCONFIG_FOUND)
+    target_link_directories(fortty PRIVATE ${FONTCONFIG_LIBRARY_DIRS})
+endif()
+
 # For Linux, we need dl for GLAD's dlopen
 if(UNIX AND NOT APPLE)
     target_link_libraries(fortty PRIVATE dl)
