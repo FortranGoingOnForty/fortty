@@ -35,6 +35,8 @@ module cell_mod
     type(color_t) :: fg               ! Foreground color
     type(color_t) :: bg               ! Background color
     integer :: attrs = 0              ! Attribute flags
+    integer :: width = 1              ! Display width (1 or 2 for wide chars)
+    logical :: is_continuation = .false.  ! True if 2nd half of wide char
   end type cell_t
 
   ! Default colors (can be overridden by config)
