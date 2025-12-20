@@ -33,6 +33,10 @@ module parser_mod
     ! OSC string buffer (for window title, etc.)
     character(len=256) :: osc_buffer
     integer :: osc_len = 0
+
+    ! UTF-8 decoding state
+    integer :: utf8_codepoint = 0
+    integer :: utf8_remaining = 0
   end type parser_t
 
 contains
@@ -42,6 +46,8 @@ contains
     type(parser_t), intent(inout) :: p
 
     call parser_reset(p)
+    p%utf8_codepoint = 0
+    p%utf8_remaining = 0
   end subroutine parser_init
 
   ! Reset parser to ground state
@@ -57,7 +63,16 @@ contains
     p%private_marker = ' '
     p%osc_buffer = ''
     p%osc_len = 0
+    ! Note: Don't reset UTF-8 state here - it persists across escape sequences
   end subroutine parser_reset
+
+  ! Reset UTF-8 decoding state (call on invalid sequences)
+  subroutine parser_reset_utf8(p)
+    type(parser_t), intent(inout) :: p
+
+    p%utf8_codepoint = 0
+    p%utf8_remaining = 0
+  end subroutine parser_reset_utf8
 
   ! Process a single byte from PTY output
   subroutine parser_process_byte(p, term, byte)
@@ -77,18 +92,67 @@ contains
     end select
   end subroutine parser_process_byte
 
-  ! Handle ground state - normal character processing
-  subroutine handle_ground(p, term, byte)
+  ! Handle ground state - normal character processing with UTF-8 decoding
+  recursive subroutine handle_ground(p, term, byte)
     type(parser_t), intent(inout) :: p
     type(terminal_t), intent(inout) :: term
     integer, intent(in) :: byte
 
+    ! Check for escape sequence start
     if (byte == 27) then  ! ESC
+      ! Abort any in-progress UTF-8 sequence
+      call parser_reset_utf8(p)
       p%state = STATE_ESCAPE
+      return
+    end if
+
+    ! UTF-8 decoding state machine
+    if (p%utf8_remaining > 0) then
+      ! Expecting continuation byte (10xxxxxx)
+      if (iand(byte, 192) == 128) then  ! 192 = 0xC0, 128 = 0x80
+        ! Valid continuation byte
+        p%utf8_codepoint = ior(ishft(p%utf8_codepoint, 6), iand(byte, 63))
+        p%utf8_remaining = p%utf8_remaining - 1
+
+        if (p%utf8_remaining == 0) then
+          ! UTF-8 sequence complete - output the codepoint
+          call terminal_put_char(term, p%utf8_codepoint)
+          p%utf8_codepoint = 0
+        end if
+      else
+        ! Invalid continuation - reset and process byte as new start
+        call parser_reset_utf8(p)
+        call handle_ground(p, term, byte)
+      end if
+      return
+    end if
+
+    ! Check for UTF-8 lead byte
+    if (byte < 128) then
+      ! ASCII (0xxxxxxx) - single byte, pass directly
+      call terminal_put_char(term, byte)
+
+    else if (iand(byte, 224) == 192) then  ! 224 = 0xE0, 192 = 0xC0
+      ! 2-byte sequence (110xxxxx)
+      p%utf8_codepoint = iand(byte, 31)  ! Keep lower 5 bits
+      p%utf8_remaining = 1
+
+    else if (iand(byte, 240) == 224) then  ! 240 = 0xF0, 224 = 0xE0
+      ! 3-byte sequence (1110xxxx)
+      p%utf8_codepoint = iand(byte, 15)  ! Keep lower 4 bits
+      p%utf8_remaining = 2
+
+    else if (iand(byte, 248) == 240) then  ! 248 = 0xF8, 240 = 0xF0
+      ! 4-byte sequence (11110xxx)
+      p%utf8_codepoint = iand(byte, 7)   ! Keep lower 3 bits
+      p%utf8_remaining = 3
+
     else
-      ! Let terminal handle the character (including control chars)
+      ! Invalid UTF-8 lead byte (continuation byte without lead, or invalid)
+      ! Pass through as-is (shows replacement character behavior)
       call terminal_put_char(term, byte)
     end if
+
   end subroutine handle_ground
 
   ! Handle escape state - ESC received
