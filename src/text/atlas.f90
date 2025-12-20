@@ -44,6 +44,7 @@ contains
     integer :: cp, i
     type(glyph_t) :: g
     type(c_ptr) :: bitmap_ptr
+    integer(c_int8_t), target :: white_pixel(1)
 
     if (.not. font%loaded) then
       print *, "Error: Cannot create atlas from unloaded font"
@@ -71,6 +72,12 @@ contains
     call glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, &
                       atlas%width, atlas%height, 0, &
                       GL_RED, GL_UNSIGNED_BYTE, c_null_ptr)
+
+    ! Add a solid white pixel at position (0,0) for solid rectangle rendering
+    ! This allows renderer_draw_rect to sample a non-transparent pixel
+    white_pixel(1) = -1_c_int8_t  ! 255 as signed byte
+    call glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, &
+                         GL_RED, GL_UNSIGNED_BYTE, c_loc(white_pixel))
 
     ! Initialize glyph array
     do cp = 0, 127

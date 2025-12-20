@@ -358,12 +358,13 @@ contains
     x1 = x0 + real(w, c_float)
     y1 = y0 + real(h, c_float)
 
-    ! Use UV coords (0,0) which should sample a solid pixel from atlas
-    ! Most atlases have a solid white pixel at origin
-    u0 = 0.0_c_float
-    v0 = 0.0_c_float
-    u1 = 0.001_c_float  ! Tiny region to avoid sampling other glyphs
-    v1 = 0.001_c_float
+    ! Sample from center of white pixel at atlas origin (0.5, 0.5) in pixel coords
+    ! Atlas is 1024x1024, so UV center = 0.5/1024 ≈ 0.000488
+    ! Use same UV for all vertices to get solid color (no interpolation)
+    u0 = 0.0005_c_float
+    v0 = 0.0005_c_float
+    u1 = 0.0005_c_float
+    v1 = 0.0005_c_float
 
     ! Build 6 vertices for 2 triangles
     base = r%vertex_count * FLOATS_PER_VERTEX + 1

@@ -4,7 +4,14 @@
  */
 
 #define _XOPEN_SOURCE 600
+
+/* Platform-specific PTY header */
+#if defined(__APPLE__)
+#include <util.h>
+#else
 #include <pty.h>
+#endif
+
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>

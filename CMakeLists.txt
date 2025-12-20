@@ -30,7 +30,12 @@ add_library(helpers STATIC
 )
 target_include_directories(helpers PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_include_directories(helpers PRIVATE ${FREETYPE_INCLUDE_DIRS})
-target_link_libraries(helpers PRIVATE glfw ${FREETYPE_LIBRARIES} util)
+target_link_libraries(helpers PRIVATE glfw ${FREETYPE_LIBRARIES})
+
+# Link util library for PTY on Linux (not needed on macOS)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(helpers PRIVATE util)
+endif()
 
 # Link fontconfig if available
 if(FONTCONFIG_FOUND)

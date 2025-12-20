@@ -263,7 +263,9 @@ program fortty
     end if
 
     do row = 1, scr%rows
-      y = real(row) * cell_height
+      ! Cell top-left y coordinate (for rectangles like selection/cursor)
+      ! Row 1 starts at y=0, row 2 at y=cell_height, etc.
+      y = real(row - 1) * cell_height
 
       ! Determine if this row shows scrollback or screen content
       sb_offset = scroll_offset - row + 1
@@ -279,17 +281,19 @@ program fortty
 
           x = real(col - 1) * cell_width
 
-          ! Draw selection background if selected
-          if (selection_contains(sel, row, col)) then
-            call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                    0.3, 0.3, 0.6, 1.0)
-          end if
-
+          ! Only render cells with actual text content
           if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
+            ! Draw selection background if selected (only for text cells)
+            if (selection_contains(sel, row, col)) then
+              call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                      0.3, 0.3, 0.6, 1.0)
+            end if
+
             r = real(cell%fg%r) / 255.0
             g = real(cell%fg%g) / 255.0
             b = real(cell%fg%b) / 255.0
-            call renderer_draw_char(ren, x, y, cell%codepoint, r, g, b, 1.0)
+            ! Text baseline is at cell bottom; add cell_height to position correctly
+            call renderer_draw_char(ren, x, y + real(cell_height), cell%codepoint, r, g, b, 1.0)
           end if
         end do
       else
@@ -304,17 +308,18 @@ program fortty
 
             x = real(col - 1) * cell_width
 
-            ! Draw selection background if selected
-            if (selection_contains(sel, row, col)) then
-              call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                      0.3, 0.3, 0.6, 1.0)
-            end if
-
+            ! Only render cells with actual text content
             if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
+              ! Draw selection background if selected (only for text cells)
+              if (selection_contains(sel, row, col)) then
+                call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                        0.3, 0.3, 0.6, 1.0)
+              end if
               r = real(cell%fg%r) / 255.0
               g = real(cell%fg%g) / 255.0
               b = real(cell%fg%b) / 255.0
-              call renderer_draw_char(ren, x, y, cell%codepoint, r, g, b, 1.0)
+              ! Text baseline is at cell bottom; add cell_height to position correctly
+              call renderer_draw_char(ren, x, y + real(cell_height), cell%codepoint, r, g, b, 1.0)
             end if
           end do
         end if
