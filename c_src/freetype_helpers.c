@@ -40,17 +40,10 @@ void fortty_ft_done_face(FT_Face face) {
 /* Get font metrics for terminal cell sizing */
 void fortty_ft_get_metrics(FT_Face face, int *cell_width, int *cell_height,
                            int *ascender, int *descender) {
-    /* For monospace fonts, use the max advance width */
-    if (face->face_flags & FT_FACE_FLAG_FIXED_WIDTH) {
-        *cell_width = face->max_advance_width >> 6;
-    } else {
-        /* Fallback: measure 'M' character */
-        if (FT_Load_Char(face, 'M', FT_LOAD_DEFAULT) == 0) {
-            *cell_width = face->glyph->advance.x >> 6;
-        } else {
-            *cell_width = face->size->metrics.max_advance >> 6;
-        }
-    }
+    /* Use the scaled max advance from size metrics (26.6 fixed-point pixels).
+     * Note: face->max_advance_width is in font units (unscaled), not pixels!
+     */
+    *cell_width = face->size->metrics.max_advance >> 6;
 
     /* Height from font metrics (in 1/64 pixels, convert to pixels) */
     *ascender = face->size->metrics.ascender >> 6;
