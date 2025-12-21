@@ -33,7 +33,7 @@ program fortty
   integer :: response_len
   real :: x, y, r, g, b, bg_r, bg_g, bg_b
   type(cell_t), allocatable :: sb_line(:)
-  integer :: cell_width, cell_height  ! From font metrics
+  integer :: cell_width, cell_height, ascender  ! From font metrics
   real(8) :: current_time, last_time, blink_timer
   logical :: cursor_blink_visible
   type(selection_t) :: sel
@@ -173,9 +173,11 @@ program fortty
   ! Get cell dimensions from font metrics
   cell_width = ren%font%cell_width
   cell_height = ren%font%cell_height
+  ascender = ren%font%ascender
   if (cell_width < 1) cell_width = 10  ! Fallback
   if (cell_height < 1) cell_height = 18  ! Fallback
-  print *, "Font cell size:", cell_width, "x", cell_height
+  if (ascender < 1) ascender = cell_height - 4  ! Fallback estimate
+  print *, "Font cell size:", cell_width, "x", cell_height, " ascender:", ascender
 
   ! Share cell dimensions with window module for mouse selection
   call window_set_cell_size(cell_width, cell_height)
@@ -317,8 +319,8 @@ program fortty
             r = real(cell%fg%r) / 255.0
             g = real(cell%fg%g) / 255.0
             b = real(cell%fg%b) / 255.0
-            ! Text baseline is at cell bottom; add cell_height to position correctly
-            call renderer_draw_char(ren, x, y + real(cell_height), cell%codepoint, r, g, b, 1.0)
+            ! Baseline is at y + ascender (not cell bottom - descenders need room below)
+            call renderer_draw_char(ren, x, y + real(ascender), cell%codepoint, r, g, b, 1.0)
           end if
         end do
       else
@@ -344,8 +346,8 @@ program fortty
               r = real(cell%fg%r) / 255.0
               g = real(cell%fg%g) / 255.0
               b = real(cell%fg%b) / 255.0
-              ! Text baseline is at cell bottom; add cell_height to position correctly
-              call renderer_draw_char(ren, x, y + real(cell_height), cell%codepoint, r, g, b, 1.0)
+              ! Baseline is at y + ascender (consistent with scrollback rendering)
+              call renderer_draw_char(ren, x, y + real(ascender), cell%codepoint, r, g, b, 1.0)
             end if
           end do
         end if
@@ -361,15 +363,15 @@ program fortty
 
         select case (term%cursor%style)
           case (CURSOR_BLOCK)
-            ! Filled block cursor
+            ! Filled block cursor - cover the full cell
             call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
                                     0.7, 0.7, 0.7, 0.8)
           case (CURSOR_UNDERLINE)
-            ! Underline at bottom of cell
-            call renderer_draw_rect(ren, x, y + real(cell_height) - 2.0, &
+            ! Underline at the baseline position (y + ascender)
+            call renderer_draw_rect(ren, x, y + real(ascender), &
                                     real(cell_width), 2.0, 0.7, 0.7, 0.7, 1.0)
           case (CURSOR_BAR)
-            ! Vertical bar at left of cell
+            ! Vertical bar at left of cell - full cell height
             call renderer_draw_rect(ren, x, y, 2.0, real(cell_height), 0.7, 0.7, 0.7, 1.0)
           case default
             ! Fallback to block
