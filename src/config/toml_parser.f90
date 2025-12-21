@@ -114,8 +114,12 @@ contains
     integer :: len_val
 
     value = adjustl(value)
-    len_val = len_trim(value)
 
+    ! Remove inline comments FIRST (before removing quotes)
+    ! This correctly handles "#FFFFFF" as a quoted string, not a comment
+    call remove_inline_comment(value)
+
+    len_val = len_trim(value)
     if (len_val == 0) return
 
     ! Remove surrounding double quotes for strings
@@ -124,9 +128,6 @@ contains
         value = value(2:len_val-1)
       end if
     end if
-
-    ! Remove inline comments (# after value)
-    call remove_inline_comment(value)
 
   end subroutine parse_value
 
