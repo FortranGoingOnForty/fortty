@@ -28,6 +28,10 @@ module config_mod
     ! Terminal
     integer :: scrollback_lines = 10000
 
+    ! Cursor
+    integer :: cursor_style = 0        ! 0=block, 1=underline, 2=bar
+    logical :: cursor_blink = .true.   ! Enable cursor blinking
+
     ! Shell
     character(len=256) :: shell_program = ''
 
@@ -74,6 +78,8 @@ contains
     cfg%palette(15) = make_rgb_color(255, 255, 255)   ! Bright White
 
     cfg%scrollback_lines = 10000
+    cfg%cursor_style = 0      ! block
+    cfg%cursor_blink = .true.
     cfg%shell_program = ''
     cfg%loaded = .false.
 
