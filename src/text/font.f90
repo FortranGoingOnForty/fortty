@@ -19,6 +19,7 @@ module font_mod
     integer :: cell_height = 0
     integer :: ascender = 0
     integer :: descender = 0
+    integer :: fallback_ascender = 0  ! For baseline alignment with fallback font
     logical :: loaded = .false.
     logical :: has_fallback = .false.
   end type font_t
@@ -194,6 +195,7 @@ contains
     character(len=*), intent(in) :: path
     character(len=256) :: c_path
     integer(c_int) :: err
+    integer(c_int) :: fb_cell_w, fb_cell_h, fb_asc, fb_desc
 
     if (.not. font%loaded) return
     if (len_trim(path) == 0) return
@@ -209,6 +211,10 @@ contains
     end if
 
     font%has_fallback = .true.
+
+    ! Get fallback font metrics for baseline alignment
+    call fortty_ft_get_metrics(font%ft_face_fallback, fb_cell_w, fb_cell_h, fb_asc, fb_desc)
+    font%fallback_ascender = fb_asc
   end subroutine font_load_fallback
 
   ! Check if a glyph exists in the primary font
@@ -277,6 +283,11 @@ contains
     glyph%bearing_y = by
     glyph%advance = adv
     glyph%valid = .true.
+
+    ! Normalize baseline: adjust bearing_y for ascender difference between fonts
+    if (used_fallback) then
+      glyph%bearing_y = glyph%bearing_y - (font%fallback_ascender - font%ascender)
+    end if
 
   end function font_render_glyph_with_fallback
 
