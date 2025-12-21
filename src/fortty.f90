@@ -37,6 +37,8 @@ program fortty
   real(8) :: current_time, last_time, blink_timer
   logical :: cursor_blink_visible
   type(selection_t) :: sel
+  integer :: font_delta, new_font_size, base_font_size
+  character(len=256) :: font_path_saved, fallback_path_saved
 
   ! Load configuration (uses defaults if no config file found)
   cfg = config_load('')
@@ -91,6 +93,11 @@ program fortty
   ! Fix dangling pointer: atlas%font pointed to local var in renderer_create
   ! After assignment, we need to update it to point to ren%font
   ren%atlas%font => ren%font
+
+  ! Save font path and base size for runtime font size changes
+  font_path_saved = font_path
+  base_font_size = cfg%font_size
+  fallback_path_saved = ''  ! Will be set when fallback is loaded
 
   ! Load fallback font for missing glyphs (icons, symbols, etc.)
   ! Use config fallback if specified, otherwise auto-detect via fontconfig
@@ -162,7 +169,13 @@ program fortty
   end if
 
   if (ren%font%has_fallback) then
-    print *, "Fallback font loaded: ", trim(fallback_path)
+    ! Save the successful fallback path for font size changes
+    if (len_trim(cfg%font_fallback) > 0) then
+      fallback_path_saved = cfg%font_fallback
+    else
+      fallback_path_saved = fallback_path
+    end if
+    print *, "Fallback font loaded: ", trim(fallback_path_saved)
   else
     print *, "Warning: No fallback font loaded - some icons may not display"
   end if
@@ -225,6 +238,59 @@ program fortty
     if (blink_timer > 0.5d0) then
       cursor_blink_visible = .not. cursor_blink_visible
       blink_timer = 0.0d0
+    end if
+
+    ! Check for font size change request (Ctrl/Cmd +/-)
+    font_delta = window_get_font_delta()
+    if (font_delta /= 0) then
+      call window_clear_font_delta()
+
+      if (font_delta == -999) then
+        ! Reset to default
+        new_font_size = base_font_size
+      else
+        new_font_size = ren%font%size_px + font_delta
+      end if
+
+      ! Clamp to reasonable range (8px to 72px)
+      new_font_size = max(8, min(72, new_font_size))
+
+      if (new_font_size /= ren%font%size_px) then
+        ! Reload font with new size
+        call renderer_change_font_size(ren, trim(font_path_saved), new_font_size)
+
+        ! Fix atlas font pointer after reload
+        ren%atlas%font => ren%font
+
+        ! Reload fallback font (using saved path from startup)
+        if (len_trim(fallback_path_saved) > 0) then
+          call renderer_load_fallback_font(ren, trim(fallback_path_saved))
+        end if
+
+        ! Update cell dimensions from new font
+        cell_width = ren%font%cell_width
+        cell_height = ren%font%cell_height
+        ascender = ren%font%ascender
+        if (cell_width < 1) cell_width = 10
+        if (cell_height < 1) cell_height = 18
+        if (ascender < 1) ascender = cell_height - 4
+
+        ! Update window module's cell size for mouse coords
+        call window_set_cell_size(cell_width, cell_height)
+
+        ! Recalculate terminal dimensions
+        new_cols = win_width / cell_width
+        new_rows = win_height / cell_height
+        if (new_cols /= term_cols .or. new_rows /= term_rows) then
+          term_cols = new_cols
+          term_rows = new_rows
+          call pty_resize(pty, term_rows, term_cols)
+          call terminal_resize(term, term_rows, term_cols)
+        end if
+
+        call window_set_font_size(new_font_size)
+        print *, "Font size:", new_font_size, "px (", term_cols, "x", term_rows, ")"
+      end if
     end if
 
     ! Check for window resize

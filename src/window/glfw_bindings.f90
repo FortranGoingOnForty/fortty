@@ -74,6 +74,17 @@ module glfw_bindings
   integer(c_int), parameter :: GLFW_KEY_Y = 89
   integer(c_int), parameter :: GLFW_KEY_Z = 90
 
+  ! Number keys
+  integer(c_int), parameter :: GLFW_KEY_0 = 48
+
+  ! Symbol keys (for font size adjustment)
+  integer(c_int), parameter :: GLFW_KEY_MINUS = 45       ! '-' key
+  integer(c_int), parameter :: GLFW_KEY_EQUAL = 61       ! '=' key
+
+  ! Numpad keys
+  integer(c_int), parameter :: GLFW_KEY_KP_SUBTRACT = 333
+  integer(c_int), parameter :: GLFW_KEY_KP_ADD = 334
+
   ! Modifier masks
   integer(c_int), parameter :: GLFW_MOD_SHIFT = 1
   integer(c_int), parameter :: GLFW_MOD_CONTROL = 2

@@ -15,6 +15,7 @@ module window_mod
   public :: window_get_size, window_set_pty, window_set_terminal
   public :: window_set_title, window_set_cell_size, window_set_blur
   public :: window_get_selection, window_clipboard_set, window_clipboard_get
+  public :: window_get_font_delta, window_clear_font_delta, window_set_font_size
 
   type :: window_t
     type(c_ptr) :: handle = c_null_ptr
@@ -39,6 +40,10 @@ module window_mod
   ! Cell dimensions for mouse coordinate conversion
   integer, save :: cell_width = 10
   integer, save :: cell_height = 18
+
+  ! Font size adjustment state
+  integer, save :: pending_font_delta = 0   ! +2, -2, or -999 for reset
+  integer, save :: current_font_size = 16   ! Track current size
 
   ! Interface to C helper for loading OpenGL
   interface
@@ -229,6 +234,23 @@ contains
     if (iand(mods, GLFW_MOD_CONTROL) /= 0 .and. iand(mods, GLFW_MOD_SHIFT) /= 0) then
       if (key == GLFW_KEY_V) then
         call handle_paste(window)
+        return
+      end if
+    end if
+
+    ! Handle font size adjustment: Ctrl/Cmd + Plus/Minus/0
+    if (iand(mods, GLFW_MOD_CONTROL) /= 0 .or. iand(mods, GLFW_MOD_SUPER) /= 0) then
+      if (key == GLFW_KEY_EQUAL .or. key == GLFW_KEY_KP_ADD) then
+        ! Ctrl/Cmd + = or numpad + (increase font size)
+        pending_font_delta = 2
+        return
+      else if (key == GLFW_KEY_MINUS .or. key == GLFW_KEY_KP_SUBTRACT) then
+        ! Ctrl/Cmd + - (decrease font size)
+        pending_font_delta = -2
+        return
+      else if (key == GLFW_KEY_0) then
+        ! Ctrl/Cmd + 0 (reset font size)
+        pending_font_delta = -999
         return
       end if
     end if
@@ -703,5 +725,22 @@ contains
       end block
     end if
   end subroutine handle_paste
+
+  ! Get pending font size delta (returns 0 if none)
+  function window_get_font_delta() result(delta)
+    integer :: delta
+    delta = pending_font_delta
+  end function window_get_font_delta
+
+  ! Clear pending font size delta
+  subroutine window_clear_font_delta()
+    pending_font_delta = 0
+  end subroutine window_clear_font_delta
+
+  ! Set current font size (for tracking)
+  subroutine window_set_font_size(size)
+    integer, intent(in) :: size
+    current_font_size = size
+  end subroutine window_set_font_size
 
 end module window_mod

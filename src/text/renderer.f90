@@ -12,7 +12,7 @@ module renderer_mod
   public :: renderer_create, renderer_destroy
   public :: renderer_begin, renderer_draw_char, renderer_draw_string, renderer_flush
   public :: renderer_set_projection, renderer_load_fallback_font
-  public :: renderer_draw_rect
+  public :: renderer_draw_rect, renderer_change_font_size
 
   ! Vertex format: position(2) + texcoord(2) + color(4) = 8 floats per vertex
   integer, parameter :: FLOATS_PER_VERTEX = 8
@@ -403,5 +403,36 @@ contains
     r%vertex_count = r%vertex_count + VERTICES_PER_QUAD
 
   end subroutine renderer_draw_rect
+
+  ! Change font size at runtime (destroys old font/atlas, creates new ones)
+  subroutine renderer_change_font_size(r, font_path, new_size)
+    type(renderer_t), intent(inout) :: r
+    character(len=*), intent(in) :: font_path
+    integer, intent(in) :: new_size
+
+    if (.not. r%initialized) return
+
+    ! Destroy old atlas and font
+    call atlas_destroy(r%atlas)
+    call font_destroy(r%font)
+
+    ! Load font with new size
+    r%font = font_load(font_path, new_size)
+    if (.not. r%font%loaded) then
+      print *, "Error: Failed to reload font at size", new_size
+      r%initialized = .false.
+      return
+    end if
+
+    ! Recreate atlas with new font
+    r%atlas = atlas_create(r%font)
+    if (.not. r%atlas%initialized) then
+      print *, "Error: Failed to recreate atlas"
+      call font_destroy(r%font)
+      r%initialized = .false.
+      return
+    end if
+
+  end subroutine renderer_change_font_size
 
 end module renderer_mod
