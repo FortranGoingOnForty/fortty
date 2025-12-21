@@ -16,6 +16,26 @@ module window_mod
   public :: window_set_title, window_set_cell_size, window_set_blur
   public :: window_get_selection, window_clipboard_set, window_clipboard_get
   public :: window_get_font_delta, window_clear_font_delta, window_set_font_size
+  public :: window_set_render_callback, window_is_resizing
+  public :: window_get_tab_action, window_clear_tab_action
+  public :: window_get_pane_action, window_clear_pane_action
+
+  ! Tab action constants
+  integer, parameter, public :: TAB_ACTION_NONE = 0
+  integer, parameter, public :: TAB_ACTION_NEW = 1
+  integer, parameter, public :: TAB_ACTION_CLOSE = 2
+  integer, parameter, public :: TAB_ACTION_NEXT = 3
+  integer, parameter, public :: TAB_ACTION_PREV = 4
+  ! TAB_ACTION_GOTO_1 through TAB_ACTION_GOTO_9 are 10-18
+
+  ! Pane action constants
+  integer, parameter, public :: PANE_ACTION_NONE = 0
+  integer, parameter, public :: PANE_ACTION_SPLIT_V = 1
+  integer, parameter, public :: PANE_ACTION_SPLIT_H = 2
+  integer, parameter, public :: PANE_ACTION_NAV_LEFT = 3
+  integer, parameter, public :: PANE_ACTION_NAV_RIGHT = 4
+  integer, parameter, public :: PANE_ACTION_NAV_UP = 5
+  integer, parameter, public :: PANE_ACTION_NAV_DOWN = 6
 
   type :: window_t
     type(c_ptr) :: handle = c_null_ptr
@@ -44,6 +64,22 @@ module window_mod
   ! Font size adjustment state
   integer, save :: pending_font_delta = 0   ! +2, -2, or -999 for reset
   integer, save :: current_font_size = 16   ! Track current size
+
+  ! Tab action state
+  integer, save :: pending_tab_action = 0   ! 0=none, 1=new, 2=close, 3=next, 4=prev, 10-18=goto
+
+  ! Pane action state
+  integer, save :: pending_pane_action = 0  ! 0=none, 1=split_v, 2=split_h, 3-6=nav
+
+  ! Live resize rendering support
+  logical, save :: is_resizing = .false.
+  procedure(render_callback_interface), pointer, save :: render_callback => null()
+
+  ! Abstract interface for render callback
+  abstract interface
+    subroutine render_callback_interface()
+    end subroutine render_callback_interface
+  end interface
 
   ! Interface to C helper for loading OpenGL
   interface
@@ -126,6 +162,7 @@ contains
 
     ! Register callbacks
     dummy = glfwSetFramebufferSizeCallback(win%handle, c_funloc(framebuffer_size_callback))
+    dummy = glfwSetWindowRefreshCallback(win%handle, c_funloc(window_refresh_callback))
     dummy = glfwSetKeyCallback(win%handle, c_funloc(key_callback))
     dummy = glfwSetCharCallback(win%handle, c_funloc(char_callback))
     dummy = glfwSetScrollCallback(win%handle, c_funloc(scroll_callback))
@@ -168,7 +205,9 @@ contains
     integer, intent(out) :: width, height
     integer(c_int) :: w, h
 
-    call glfwGetFramebufferSize(win%handle, w, h)
+    ! Use window size (points) not framebuffer size (pixels)
+    ! This ensures projection and cell math work correctly on HiDPI displays
+    call glfwGetWindowSize(win%handle, w, h)
     width = int(w)
     height = int(h)
   end subroutine window_get_size
@@ -179,7 +218,24 @@ contains
     integer(c_int), value :: width, height
 
     call glViewport(0, 0, width, height)
+
+    ! Mark that we're in a resize operation and trigger a redraw
+    ! This ensures smooth rendering during live resize on macOS
+    is_resizing = .true.
+    if (associated(render_callback)) then
+      call render_callback()
+    end if
   end subroutine framebuffer_size_callback
+
+  ! Callback: handle window refresh (called when window needs redrawing)
+  subroutine window_refresh_callback(window) bind(C)
+    type(c_ptr), value :: window
+
+    ! Trigger a redraw via the render callback
+    if (associated(render_callback)) then
+      call render_callback()
+    end if
+  end subroutine window_refresh_callback
 
   ! Set PTY for keyboard input
   subroutine window_set_pty(p)
@@ -253,6 +309,92 @@ contains
         pending_font_delta = -999
         return
       end if
+    end if
+
+    ! Handle tab management: Ctrl/Cmd + T/W/[/]/1-9
+    if (iand(mods, GLFW_MOD_CONTROL) /= 0 .or. iand(mods, GLFW_MOD_SUPER) /= 0) then
+      select case (key)
+        case (GLFW_KEY_T)
+          ! New tab
+          pending_tab_action = TAB_ACTION_NEW
+          return
+        case (GLFW_KEY_W)
+          ! Close tab
+          pending_tab_action = TAB_ACTION_CLOSE
+          return
+        case (GLFW_KEY_RIGHT_BRACKET)
+          ! Next tab (Cmd+])
+          pending_tab_action = TAB_ACTION_NEXT
+          return
+        case (GLFW_KEY_LEFT_BRACKET)
+          ! Previous tab (Cmd+[)
+          pending_tab_action = TAB_ACTION_PREV
+          return
+        case (GLFW_KEY_1)
+          pending_tab_action = 10
+          return
+        case (GLFW_KEY_2)
+          pending_tab_action = 11
+          return
+        case (GLFW_KEY_3)
+          pending_tab_action = 12
+          return
+        case (GLFW_KEY_4)
+          pending_tab_action = 13
+          return
+        case (GLFW_KEY_5)
+          pending_tab_action = 14
+          return
+        case (GLFW_KEY_6)
+          pending_tab_action = 15
+          return
+        case (GLFW_KEY_7)
+          pending_tab_action = 16
+          return
+        case (GLFW_KEY_8)
+          pending_tab_action = 17
+          return
+        case (GLFW_KEY_9)
+          pending_tab_action = 18
+          return
+
+        ! Pane splitting: Cmd/Ctrl + \ (vertical), Cmd/Ctrl + Shift + \ (horizontal)
+        case (GLFW_KEY_BACKSLASH)
+          if (iand(mods, GLFW_MOD_SHIFT) /= 0) then
+            pending_pane_action = PANE_ACTION_SPLIT_H
+          else
+            pending_pane_action = PANE_ACTION_SPLIT_V
+          end if
+          return
+
+        ! Pane navigation with arrow keys: Cmd/Ctrl + Arrow
+        case (GLFW_KEY_LEFT)
+          pending_pane_action = PANE_ACTION_NAV_LEFT
+          return
+        case (GLFW_KEY_RIGHT)
+          pending_pane_action = PANE_ACTION_NAV_RIGHT
+          return
+        case (GLFW_KEY_UP)
+          pending_pane_action = PANE_ACTION_NAV_UP
+          return
+        case (GLFW_KEY_DOWN)
+          pending_pane_action = PANE_ACTION_NAV_DOWN
+          return
+
+        ! Pane navigation with vim keys: Cmd/Ctrl + hjkl
+        case (GLFW_KEY_H)
+          pending_pane_action = PANE_ACTION_NAV_LEFT
+          return
+        case (GLFW_KEY_L)
+          pending_pane_action = PANE_ACTION_NAV_RIGHT
+          return
+        case (GLFW_KEY_K)
+          pending_pane_action = PANE_ACTION_NAV_UP
+          return
+        case (GLFW_KEY_J)
+          pending_pane_action = PANE_ACTION_NAV_DOWN
+          return
+      end select
     end if
 
     ! Handle Ctrl combinations (these don't trigger char_callback)
@@ -742,5 +884,41 @@ contains
     integer, intent(in) :: size
     current_font_size = size
   end subroutine window_set_font_size
+
+  ! Set the render callback for live resize support
+  subroutine window_set_render_callback(callback)
+    procedure(render_callback_interface) :: callback
+
+    render_callback => callback
+  end subroutine window_set_render_callback
+
+  ! Check if window is currently resizing (for main loop optimization)
+  function window_is_resizing() result(resizing)
+    logical :: resizing
+    resizing = is_resizing
+    is_resizing = .false.  ! Clear the flag after reading
+  end function window_is_resizing
+
+  ! Get pending tab action (returns 0 if none)
+  function window_get_tab_action() result(action)
+    integer :: action
+    action = pending_tab_action
+  end function window_get_tab_action
+
+  ! Clear pending tab action
+  subroutine window_clear_tab_action()
+    pending_tab_action = TAB_ACTION_NONE
+  end subroutine window_clear_tab_action
+
+  ! Get pending pane action (returns 0 if none)
+  function window_get_pane_action() result(action)
+    integer :: action
+    action = pending_pane_action
+  end function window_get_pane_action
+
+  ! Clear pending pane action
+  subroutine window_clear_pane_action()
+    pending_pane_action = PANE_ACTION_NONE
+  end subroutine window_clear_pane_action
 
 end module window_mod

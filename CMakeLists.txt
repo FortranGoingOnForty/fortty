@@ -81,6 +81,10 @@ set(FORTRAN_SOURCES
     src/pty/pty.f90
     src/window/glfw_bindings.f90
     src/window/window.f90
+    src/panes/pane.f90
+    src/panes/layout.f90
+    src/tabs/tab_manager.f90
+    src/tabs/tab_bar.f90
     src/fortty.f90
 )
 

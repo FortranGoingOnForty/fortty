@@ -85,6 +85,22 @@ module glfw_bindings
   integer(c_int), parameter :: GLFW_KEY_KP_SUBTRACT = 333
   integer(c_int), parameter :: GLFW_KEY_KP_ADD = 334
 
+  ! Bracket and backslash keys (for tab/pane keybindings)
+  integer(c_int), parameter :: GLFW_KEY_LEFT_BRACKET = 91   ! [
+  integer(c_int), parameter :: GLFW_KEY_BACKSLASH = 92      ! \
+  integer(c_int), parameter :: GLFW_KEY_RIGHT_BRACKET = 93  ! ]
+
+  ! Number keys 1-9 (for tab switching)
+  integer(c_int), parameter :: GLFW_KEY_1 = 49
+  integer(c_int), parameter :: GLFW_KEY_2 = 50
+  integer(c_int), parameter :: GLFW_KEY_3 = 51
+  integer(c_int), parameter :: GLFW_KEY_4 = 52
+  integer(c_int), parameter :: GLFW_KEY_5 = 53
+  integer(c_int), parameter :: GLFW_KEY_6 = 54
+  integer(c_int), parameter :: GLFW_KEY_7 = 55
+  integer(c_int), parameter :: GLFW_KEY_8 = 56
+  integer(c_int), parameter :: GLFW_KEY_9 = 57
+
   ! Modifier masks
   integer(c_int), parameter :: GLFW_MOD_SHIFT = 1
   integer(c_int), parameter :: GLFW_MOD_CONTROL = 2
@@ -144,6 +160,11 @@ module glfw_bindings
       type(c_ptr), value :: window
       real(c_double), value :: xpos, ypos
     end subroutine glfw_cursor_pos_callback
+
+    subroutine glfw_window_refresh_callback(window) bind(C)
+      import :: c_ptr
+      type(c_ptr), value :: window
+    end subroutine glfw_window_refresh_callback
   end interface
 
   interface
@@ -226,6 +247,13 @@ module glfw_bindings
       integer(c_int), intent(out) :: width, height
     end subroutine glfwGetFramebufferSize
 
+    ! void glfwGetWindowSize(GLFWwindow* window, int* width, int* height)
+    subroutine glfwGetWindowSize(window, width, height) bind(C, name="glfwGetWindowSize")
+      import :: c_int, c_ptr
+      type(c_ptr), value :: window
+      integer(c_int), intent(out) :: width, height
+    end subroutine glfwGetWindowSize
+
     ! GLFWframebuffersizefun glfwSetFramebufferSizeCallback(GLFWwindow* window,
     !                                                       GLFWframebuffersizefun callback)
     type(c_funptr) function glfwSetFramebufferSizeCallback(window, callback) &
@@ -307,6 +335,14 @@ module glfw_bindings
       type(c_ptr), value :: window
       character(kind=c_char), intent(in) :: string(*)
     end subroutine glfwSetClipboardString
+
+    ! GLFWwindowrefreshfun glfwSetWindowRefreshCallback(GLFWwindow* window, GLFWwindowrefreshfun callback)
+    type(c_funptr) function glfwSetWindowRefreshCallback(window, callback) &
+        bind(C, name="glfwSetWindowRefreshCallback")
+      import :: c_ptr, c_funptr
+      type(c_ptr), value :: window
+      type(c_funptr), value :: callback
+    end function glfwSetWindowRefreshCallback
   end interface
 
 end module glfw_bindings

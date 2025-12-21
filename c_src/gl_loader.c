@@ -219,3 +219,7 @@ void fortty_glDisable(unsigned int cap) {
 void fortty_glBlendFunc(unsigned int sfactor, unsigned int dfactor) {
     glBlendFunc(sfactor, dfactor);
 }
+
+void fortty_glScissor(int x, int y, int width, int height) {
+    glScissor(x, y, width, height);
+}

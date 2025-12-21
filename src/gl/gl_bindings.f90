@@ -43,6 +43,9 @@ module gl_bindings
   integer(c_int), parameter :: GL_SRC_ALPHA = int(Z'0302', c_int)
   integer(c_int), parameter :: GL_ONE_MINUS_SRC_ALPHA = int(Z'0303', c_int)
 
+  ! Scissor test constant
+  integer(c_int), parameter :: GL_SCISSOR_TEST = int(Z'0C11', c_int)
+
   ! Interface to C wrapper functions (in gl_loader.c)
   interface
     ! ============ Basic functions ============
@@ -314,6 +317,11 @@ module gl_bindings
       import :: c_int
       integer(c_int), value :: sfactor, dfactor
     end subroutine glBlendFunc
+
+    subroutine glScissor(x, y, width, height) bind(C, name="fortty_glScissor")
+      import :: c_int
+      integer(c_int), value :: x, y, width, height
+    end subroutine glScissor
   end interface
 
 end module gl_bindings

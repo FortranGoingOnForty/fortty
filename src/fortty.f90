@@ -12,14 +12,18 @@ program fortty
   use config_mod
   use cursor_mod, only: CURSOR_BLOCK, CURSOR_UNDERLINE, CURSOR_BAR
   use glfw_bindings, only: glfwGetTime
+  use tab_manager_mod
+  use tab_bar_mod
+  use pane_mod
+  use layout_mod, only: DIR_LEFT, DIR_RIGHT, DIR_UP, DIR_DOWN
   implicit none
 
   type(window_t) :: win
   type(renderer_t), target :: ren
-  type(pty_t) :: pty
-  type(terminal_t) :: term
-  type(parser_t) :: parser
-  type(screen_t), pointer :: scr
+  type(tab_manager_t), target :: tab_mgr
+  type(pane_t), pointer :: active_pane
+  type(terminal_t), pointer :: term
+  type(pty_t), pointer :: active_pty
   type(cell_t) :: cell
   type(config_t) :: cfg
   integer :: win_width, win_height
@@ -29,13 +33,13 @@ program fortty
   character(len=256) :: font_path, fallback_path
   character(len=4096) :: pty_buffer
   character(len=256) :: response_buf
-  integer :: nbytes, i, row, col, scroll_offset, sb_offset, screen_row
-  integer :: response_len
+  integer :: nbytes, i, j, k, row, col, scroll_offset, sb_offset, screen_row
+  integer :: response_len, tab_action, pane_action, tab_bar_height
   real :: x, y, r, g, b, bg_r, bg_g, bg_b
   type(cell_t), allocatable :: sb_line(:)
   integer :: cell_width, cell_height, ascender  ! From font metrics
   real(8) :: current_time, last_time, blink_timer
-  logical :: cursor_blink_visible
+  logical :: cursor_blink_visible, any_pty_alive
   type(selection_t) :: sel
   integer :: font_delta, new_font_size, base_font_size
   character(len=256) :: font_path_saved, fallback_path_saved
@@ -196,41 +200,45 @@ program fortty
   call window_set_cell_size(cell_width, cell_height)
 
   ! Calculate terminal dimensions based on font metrics
+  ! Tab bar is hidden with only 1 tab, so use full height initially
   term_cols = win_width / cell_width
   term_rows = win_height / cell_height
   prev_width = win_width
   prev_height = win_height
 
-  ! Initialize terminal state and parser
-  call terminal_init(term, term_rows, term_cols)
-  call parser_init(parser)
+  ! Initialize tab manager with first tab
+  call tab_manager_init(tab_mgr, term_rows, term_cols)
 
-  ! Apply cursor settings from config
-  term%cursor%style = cfg%cursor_style
-  term%cursor%blink = cfg%cursor_blink
-
-  ! Open PTY with shell
-  pty = pty_open("", term_rows, term_cols)  ! Empty string = use $SHELL
-
-  if (.not. pty%active) then
-    print *, "Error: Could not open PTY"
-    call terminal_destroy(term)
+  if (.not. tab_manager_has_tabs(tab_mgr)) then
+    print *, "Error: Could not create initial tab"
     call renderer_destroy(ren)
     call window_destroy(win)
     stop 1
   end if
 
-  ! Connect PTY and terminal to window for keyboard input and scrollback
-  call window_set_pty(pty)
+  ! Apply cursor settings from config to first tab's first pane
+  tab_mgr%tabs(1)%panes(1)%term%cursor%style = cfg%cursor_style
+  tab_mgr%tabs(1)%panes(1)%term%cursor%blink = cfg%cursor_blink
+
+  ! Get pointers to active tab's terminal and PTY
+  term => tab_manager_get_active_term(tab_mgr)
+  active_pty => tab_manager_get_active_pty(tab_mgr)
+
+  ! Connect active PTY and terminal to window for keyboard input and scrollback
+  call window_set_pty(active_pty)
   call window_set_terminal(term)
+
+  ! Register render callback for live resize support on macOS
+  call window_set_render_callback(do_render)
 
   ! Initialize blink timer
   last_time = glfwGetTime()
   blink_timer = 0.0d0
   cursor_blink_visible = .true.
 
-  ! Main event loop
-  do while (.not. window_should_close(win) .and. pty_is_alive(pty))
+  ! Main event loop - exit when window closes or all tabs closed
+  any_pty_alive = tab_manager_has_tabs(tab_mgr)
+  do while (.not. window_should_close(win) .and. any_pty_alive)
     ! Update blink timer
     current_time = glfwGetTime()
     blink_timer = blink_timer + (current_time - last_time)
@@ -238,6 +246,24 @@ program fortty
     if (blink_timer > 0.5d0) then
       cursor_blink_visible = .not. cursor_blink_visible
       blink_timer = 0.0d0
+    end if
+
+    ! Poll events first - this ensures resize callbacks fire BEFORE we render
+    ! so viewport and projection updates happen in the same frame
+    call window_poll_events()
+
+    ! Handle tab actions (Cmd/Ctrl+T, W, [, ], 1-9)
+    tab_action = window_get_tab_action()
+    if (tab_action /= 0) then
+      call window_clear_tab_action()
+      call handle_tab_action(tab_action)
+    end if
+
+    ! Handle pane actions (Cmd/Ctrl+\, arrows, hjkl)
+    pane_action = window_get_pane_action()
+    if (pane_action /= 0) then
+      call window_clear_pane_action()
+      call handle_pane_action(pane_action)
     end if
 
     ! Check for font size change request (Ctrl/Cmd +/-)
@@ -278,14 +304,31 @@ program fortty
         ! Update window module's cell size for mouse coords
         call window_set_cell_size(cell_width, cell_height)
 
-        ! Recalculate terminal dimensions
+        ! Recalculate terminal dimensions (account for tab bar if visible)
+        ! Tab bar is hidden when only 1 tab
+        if (tab_mgr%count > 1) then
+          tab_bar_height = tab_mgr%bar_height
+        else
+          tab_bar_height = 0
+        end if
         new_cols = win_width / cell_width
-        new_rows = win_height / cell_height
+        new_rows = (win_height - tab_bar_height) / cell_height
         if (new_cols /= term_cols .or. new_rows /= term_rows) then
           term_cols = new_cols
           term_rows = new_rows
-          call pty_resize(pty, term_rows, term_cols)
-          call terminal_resize(term, term_rows, term_cols)
+          tab_mgr%term_rows = term_rows
+          tab_mgr%term_cols = term_cols
+          ! Resize all panes in all tabs
+          do i = 1, tab_mgr%count
+            do k = 1, tab_mgr%tabs(i)%pane_count
+              call pty_resize(tab_mgr%tabs(i)%panes(k)%pty, term_rows, term_cols)
+              call terminal_resize(tab_mgr%tabs(i)%panes(k)%term, term_rows, term_cols)
+            end do
+          end do
+          ! Recalculate layout for active tab
+          call tab_manager_recalculate_layout(tab_mgr, 0, tab_bar_height, &
+                                              win_width, win_height - tab_bar_height, &
+                                              cell_width, cell_height)
         end if
 
         call window_set_font_size(new_font_size)
@@ -302,37 +345,110 @@ program fortty
       ! Update projection matrix
       call renderer_set_projection(ren, win_width, win_height)
 
-      ! Calculate new terminal size and notify PTY and terminal
+      ! Calculate new terminal size and notify PTY and terminal (account for tab bar if visible)
+      if (tab_mgr%count > 1) then
+        tab_bar_height = tab_mgr%bar_height
+      else
+        tab_bar_height = 0
+      end if
       new_cols = win_width / cell_width
-      new_rows = win_height / cell_height
+      new_rows = (win_height - tab_bar_height) / cell_height
       if (new_cols /= term_cols .or. new_rows /= term_rows) then
         term_cols = new_cols
         term_rows = new_rows
-        call pty_resize(pty, term_rows, term_cols)
-        call terminal_resize(term, term_rows, term_cols)
+        tab_mgr%term_rows = term_rows
+        tab_mgr%term_cols = term_cols
+        ! Resize all panes in all tabs
+        do i = 1, tab_mgr%count
+          do k = 1, tab_mgr%tabs(i)%pane_count
+            call pty_resize(tab_mgr%tabs(i)%panes(k)%pty, term_rows, term_cols)
+            call terminal_resize(tab_mgr%tabs(i)%panes(k)%term, term_rows, term_cols)
+          end do
+        end do
       end if
+      ! Recalculate layout for active tab
+      call tab_manager_recalculate_layout(tab_mgr, 0, tab_bar_height, &
+                                          win_width, win_height - tab_bar_height, &
+                                          cell_width, cell_height)
     end if
 
-    ! Read from PTY (non-blocking)
-    nbytes = pty_read(pty, pty_buffer, 4096)
-    if (nbytes > 0) then
-      ! Process each byte through escape sequence parser
-      do i = 1, nbytes
-        call parser_process_byte(parser, term, ichar(pty_buffer(i:i)))
+    ! Read from ALL PTYs (non-blocking) - keeps inactive panes responsive
+    any_pty_alive = .false.
+    do i = 1, tab_mgr%count
+      do k = 1, tab_mgr%tabs(i)%pane_count
+        if (tab_mgr%tabs(i)%panes(k)%pty%active) then
+          any_pty_alive = .true.
+          nbytes = pty_read(tab_mgr%tabs(i)%panes(k)%pty, pty_buffer, 4096)
+          if (nbytes > 0) then
+            ! Process each byte through this pane's parser
+            do j = 1, nbytes
+              call parser_process_byte(tab_mgr%tabs(i)%panes(k)%parser, &
+                                       tab_mgr%tabs(i)%panes(k)%term, &
+                                       ichar(pty_buffer(j:j)))
+            end do
+          end if
+
+          ! Check for terminal responses and send to this pane's PTY
+          if (terminal_has_response(tab_mgr%tabs(i)%panes(k)%term)) then
+            call terminal_get_response(tab_mgr%tabs(i)%panes(k)%term, response_buf, response_len)
+            if (response_len > 0) then
+              call pty_write(tab_mgr%tabs(i)%panes(k)%pty, response_buf, response_len)
+            end if
+          end if
+        end if
       end do
+    end do
+
+    ! Update window pointers to current active tab
+    term => tab_manager_get_active_term(tab_mgr)
+    active_pty => tab_manager_get_active_pty(tab_mgr)
+    if (associated(term) .and. associated(active_pty)) then
+      call window_set_pty(active_pty)
+      call window_set_terminal(term)
     end if
 
-    ! Check for terminal responses (DA1, DSR, etc.) and send to PTY
-    if (terminal_has_response(term)) then
-      call terminal_get_response(term, response_buf, response_len)
-      if (response_len > 0) then
-        call pty_write(pty, response_buf, response_len)
+    ! Check for window title changes (from OSC 0/1/2) on active tab
+    if (associated(term)) then
+      if (terminal_has_title_changed(term)) then
+        call window_set_title(win, terminal_get_title(term))
+        ! Also update the tab title
+        tab_mgr%tabs(tab_mgr%active_index)%title = terminal_get_title(term)
       end if
     end if
 
-    ! Check for window title changes (from OSC 0/1/2)
-    if (terminal_has_title_changed(term)) then
-      call window_set_title(win, terminal_get_title(term))
+    ! Render and swap
+    call do_render()
+  end do
+
+  ! Cleanup
+  if (allocated(sb_line)) deallocate(sb_line)
+  call tab_manager_destroy(tab_mgr)
+  call renderer_destroy(ren)
+  call window_destroy(win)
+
+contains
+
+  ! Internal render subroutine - can be called from main loop or resize callback
+  ! Has access to all program variables through host association
+  subroutine do_render()
+    integer :: render_width, render_height
+    integer :: pane_idx, tab_idx
+    integer :: scissor_x, scissor_y, scissor_w, scissor_h
+    real :: dim_factor, pane_x_offset, pane_y_offset
+    type(pane_t), pointer :: cur_pane
+    type(terminal_t), pointer :: pane_term
+    type(screen_t), pointer :: pane_scr
+
+    ! Get current window size and update projection if needed
+    ! This is critical for live resize - we need to update projection
+    ! to match the new viewport that was set by the framebuffer callback
+    call window_get_size(win, render_width, render_height)
+    if (render_width /= prev_width .or. render_height /= prev_height) then
+      prev_width = render_width
+      prev_height = render_height
+      win_width = render_width
+      win_height = render_height
+      call renderer_set_projection(ren, win_width, win_height)
     end if
 
     ! Clear screen with background color and opacity from config
@@ -345,124 +461,307 @@ program fortty
     ! Render terminal buffer
     call renderer_begin(ren)
 
-    scr => terminal_active_screen(term)
-    scroll_offset = terminal_get_scroll_offset(term)
+    ! Render tab bar at top
+    call tab_bar_render(ren, tab_mgr, win_width, tab_mgr%bar_height, cell_width, ascender)
 
-    ! Get current selection for highlighting
-    sel = window_get_selection()
-
-    ! Allocate/resize scrollback line buffer if needed
-    if (.not. allocated(sb_line)) then
-      allocate(sb_line(term_cols))
-    else if (size(sb_line) /= term_cols) then
-      deallocate(sb_line)
-      allocate(sb_line(term_cols))
+    ! Calculate effective tab bar height (hidden when only 1 tab)
+    if (tab_mgr%count > 1) then
+      tab_bar_height = tab_mgr%bar_height
+    else
+      tab_bar_height = 0
     end if
 
-    do row = 1, scr%rows
-      ! Cell top-left y coordinate (for rectangles like selection/cursor)
-      ! Row 1 starts at y=0, row 2 at y=cell_height, etc.
-      y = real(row - 1) * cell_height
+    ! Guard against no active tab
+    if (tab_mgr%active_index < 1 .or. tab_mgr%active_index > tab_mgr%count) then
+      call renderer_flush(ren)
+      call window_swap_buffers(win)
+      return
+    end if
 
-      ! Determine if this row shows scrollback or screen content
-      sb_offset = scroll_offset - row + 1
+    tab_idx = tab_mgr%active_index
 
-      if (sb_offset > 0 .and. sb_offset <= terminal_get_scrollback_count(term)) then
-        ! This row shows scrollback content
-        call terminal_get_scrollback_line(term, sb_offset - 1, sb_line, term_cols)
-        do col = 1, min(term_cols, scr%cols)
-          cell = sb_line(col)
+    ! Get current selection for highlighting (only applies to active pane)
+    sel = window_get_selection()
 
-          ! Skip continuation cells (2nd half of wide chars)
-          if (cell%is_continuation) cycle
+    ! Render each pane in the active tab
+    do pane_idx = 1, tab_mgr%tabs(tab_idx)%pane_count
+      cur_pane => tab_mgr%tabs(tab_idx)%panes(pane_idx)
+      pane_term => cur_pane%term
+      pane_scr => terminal_active_screen(pane_term)
 
-          x = real(col - 1) * cell_width
-
-          ! Draw selection background if selected (for all cells including spaces)
-          if (selection_contains(sel, row, col)) then
-            call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                    0.3, 0.3, 0.6, 1.0)
-          end if
-
-          ! Only render cells with actual text content
-          if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
-            r = real(cell%fg%r) / 255.0
-            g = real(cell%fg%g) / 255.0
-            b = real(cell%fg%b) / 255.0
-            ! Baseline is at y + ascender (not cell bottom - descenders need room below)
-            call renderer_draw_char(ren, x, y + real(ascender), cell%codepoint, r, g, b, 1.0)
-          end if
-        end do
+      ! Determine dimming factor (inactive panes are dimmed)
+      if (cur_pane%active) then
+        dim_factor = 1.0
       else
-        ! This row shows screen content
-        screen_row = row - scroll_offset
-        if (screen_row >= 1 .and. screen_row <= scr%rows) then
-          do col = 1, scr%cols
-            cell = screen_get_cell(scr, screen_row, col)
+        dim_factor = 0.6
+      end if
+
+      ! Calculate pane offset for rendering
+      pane_x_offset = real(cur_pane%x)
+      pane_y_offset = real(cur_pane%y)
+
+      ! Enable scissor test for this pane's viewport
+      ! OpenGL uses bottom-left origin, so convert from top-left
+      scissor_x = cur_pane%x
+      scissor_y = win_height - cur_pane%y - cur_pane%height
+      scissor_w = cur_pane%width
+      scissor_h = cur_pane%height
+      call glEnable(GL_SCISSOR_TEST)
+      call glScissor(scissor_x, scissor_y, scissor_w, scissor_h)
+
+      scroll_offset = terminal_get_scroll_offset(pane_term)
+
+      ! Allocate/resize scrollback line buffer if needed
+      if (.not. allocated(sb_line)) then
+        allocate(sb_line(cur_pane%cols))
+      else if (size(sb_line) /= cur_pane%cols) then
+        deallocate(sb_line)
+        allocate(sb_line(cur_pane%cols))
+      end if
+
+      do row = 1, pane_scr%rows
+        ! Cell top-left y coordinate relative to pane
+        y = real(row - 1) * cell_height + pane_y_offset
+
+        ! Determine if this row shows scrollback or screen content
+        sb_offset = scroll_offset - row + 1
+
+        if (sb_offset > 0 .and. sb_offset <= terminal_get_scrollback_count(pane_term)) then
+          ! This row shows scrollback content
+          call terminal_get_scrollback_line(pane_term, sb_offset - 1, sb_line, cur_pane%cols)
+          do col = 1, min(cur_pane%cols, pane_scr%cols)
+            cell = sb_line(col)
 
             ! Skip continuation cells (2nd half of wide chars)
             if (cell%is_continuation) cycle
 
-            x = real(col - 1) * cell_width
+            x = real(col - 1) * cell_width + pane_x_offset
 
-            ! Draw selection background if selected (for all cells including spaces)
-            if (selection_contains(sel, row, col)) then
+            ! Draw selection background if selected (only for active pane)
+            if (cur_pane%active .and. selection_contains(sel, row, col)) then
               call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
                                       0.3, 0.3, 0.6, 1.0)
             end if
 
             ! Only render cells with actual text content
             if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
-              r = real(cell%fg%r) / 255.0
-              g = real(cell%fg%g) / 255.0
-              b = real(cell%fg%b) / 255.0
-              ! Baseline is at y + ascender (consistent with scrollback rendering)
+              r = real(cell%fg%r) / 255.0 * dim_factor
+              g = real(cell%fg%g) / 255.0 * dim_factor
+              b = real(cell%fg%b) / 255.0 * dim_factor
               call renderer_draw_char(ren, x, y + real(ascender), cell%codepoint, r, g, b, 1.0)
             end if
           end do
+        else
+          ! This row shows screen content
+          screen_row = row - scroll_offset
+          if (screen_row >= 1 .and. screen_row <= pane_scr%rows) then
+            do col = 1, pane_scr%cols
+              cell = screen_get_cell(pane_scr, screen_row, col)
+
+              ! Skip continuation cells (2nd half of wide chars)
+              if (cell%is_continuation) cycle
+
+              x = real(col - 1) * cell_width + pane_x_offset
+
+              ! Draw selection background if selected (only for active pane)
+              if (cur_pane%active .and. selection_contains(sel, row, col)) then
+                call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                        0.3, 0.3, 0.6, 1.0)
+              end if
+
+              ! Only render cells with actual text content
+              if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
+                r = real(cell%fg%r) / 255.0 * dim_factor
+                g = real(cell%fg%g) / 255.0 * dim_factor
+                b = real(cell%fg%b) / 255.0 * dim_factor
+                call renderer_draw_char(ren, x, y + real(ascender), cell%codepoint, r, g, b, 1.0)
+              end if
+            end do
+          end if
+        end if
+      end do
+
+      ! Draw cursor if visible (only for active pane and when not scrolled back)
+      if (cur_pane%active .and. pane_term%cursor%visible .and. scroll_offset == 0) then
+        ! Check blink state - only hide cursor if blink is enabled and in off phase
+        if (.not. pane_term%cursor%blink .or. cursor_blink_visible) then
+          x = real(pane_term%cursor%col - 1) * cell_width + pane_x_offset
+          y = real(pane_term%cursor%row - 1) * cell_height + pane_y_offset
+
+          select case (pane_term%cursor%style)
+            case (CURSOR_BLOCK)
+              call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                      0.7, 0.7, 0.7, 0.8)
+            case (CURSOR_UNDERLINE)
+              call renderer_draw_rect(ren, x, y + real(ascender), &
+                                      real(cell_width), 2.0, 0.7, 0.7, 0.7, 1.0)
+            case (CURSOR_BAR)
+              call renderer_draw_rect(ren, x, y, 2.0, real(cell_height), 0.7, 0.7, 0.7, 1.0)
+            case default
+              call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                      0.7, 0.7, 0.7, 0.8)
+          end select
         end if
       end if
+
+      call glDisable(GL_SCISSOR_TEST)
     end do
-
-    ! Draw cursor if visible (only when not scrolled back)
-    if (term%cursor%visible .and. scroll_offset == 0) then
-      ! Check blink state - only hide cursor if blink is enabled and in off phase
-      if (.not. term%cursor%blink .or. cursor_blink_visible) then
-        x = real(term%cursor%col - 1) * cell_width
-        y = real(term%cursor%row - 1) * cell_height
-
-        select case (term%cursor%style)
-          case (CURSOR_BLOCK)
-            ! Filled block cursor - cover the full cell
-            call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                    0.7, 0.7, 0.7, 0.8)
-          case (CURSOR_UNDERLINE)
-            ! Underline at the baseline position (y + ascender)
-            call renderer_draw_rect(ren, x, y + real(ascender), &
-                                    real(cell_width), 2.0, 0.7, 0.7, 0.7, 1.0)
-          case (CURSOR_BAR)
-            ! Vertical bar at left of cell - full cell height
-            call renderer_draw_rect(ren, x, y, 2.0, real(cell_height), 0.7, 0.7, 0.7, 1.0)
-          case default
-            ! Fallback to block
-            call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                    0.7, 0.7, 0.7, 0.8)
-        end select
-      end if
-    end if
 
     call renderer_flush(ren)
 
-    ! Swap buffers and poll events
+    ! Swap buffers
     call window_swap_buffers(win)
-    call window_poll_events()
-  end do
+  end subroutine do_render
 
-  ! Cleanup
-  if (allocated(sb_line)) deallocate(sb_line)
-  call pty_close(pty)
-  call terminal_destroy(term)
-  call renderer_destroy(ren)
-  call window_destroy(win)
+  ! Handle tab action signals from keyboard
+  subroutine handle_tab_action(action)
+    use window_mod, only: TAB_ACTION_NEW, TAB_ACTION_CLOSE, TAB_ACTION_NEXT, TAB_ACTION_PREV
+    integer, intent(in) :: action
+    integer :: target_tab, old_count, effective_bar_height, new_term_rows, ii, kk
+    logical :: should_close_tab
+
+    old_count = tab_mgr%count
+
+    select case (action)
+      case (TAB_ACTION_NEW)
+        ! Create new tab
+        call tab_manager_add(tab_mgr)
+        ! Apply cursor settings from config to new tab's first pane
+        if (tab_mgr%count > 0) then
+          tab_mgr%tabs(tab_mgr%count)%panes(1)%term%cursor%style = cfg%cursor_style
+          tab_mgr%tabs(tab_mgr%count)%panes(1)%term%cursor%blink = cfg%cursor_blink
+        end if
+
+      case (TAB_ACTION_CLOSE)
+        ! Context-aware close: close pane if multiple, otherwise close tab
+        if (tab_mgr%active_index >= 1 .and. tab_mgr%active_index <= tab_mgr%count) then
+          if (tab_mgr%tabs(tab_mgr%active_index)%pane_count > 1) then
+            ! Multiple panes - close just the active pane
+            call tab_manager_close_pane(tab_mgr, should_close_tab)
+            ! Recalculate layout after pane removal
+            if (tab_mgr%count > 1) then
+              effective_bar_height = tab_mgr%bar_height
+            else
+              effective_bar_height = 0
+            end if
+            call tab_manager_recalculate_layout(tab_mgr, 0, effective_bar_height, &
+                                                win_width, win_height - effective_bar_height, &
+                                                cell_width, cell_height)
+          else
+            ! Single pane - close the tab
+            call tab_manager_close(tab_mgr, tab_mgr%active_index)
+          end if
+        end if
+
+      case (TAB_ACTION_NEXT)
+        ! Switch to next tab
+        call tab_manager_next(tab_mgr)
+
+      case (TAB_ACTION_PREV)
+        ! Switch to previous tab
+        call tab_manager_prev(tab_mgr)
+
+      case default
+        ! Check for goto tab 1-9 (actions 10-18)
+        if (action >= 10 .and. action <= 18) then
+          target_tab = action - 9  ! 10 -> tab 1, 11 -> tab 2, etc.
+          if (target_tab <= tab_mgr%count) then
+            call tab_manager_switch(tab_mgr, target_tab)
+          end if
+        end if
+    end select
+
+    ! Check if tab bar visibility changed (1 <-> 2+ tabs)
+    ! If so, resize all terminals to account for new available height
+    if ((old_count == 1 .and. tab_mgr%count > 1) .or. &
+        (old_count > 1 .and. tab_mgr%count == 1)) then
+      if (tab_mgr%count > 1) then
+        effective_bar_height = tab_mgr%bar_height
+      else
+        effective_bar_height = 0
+      end if
+      new_term_rows = (win_height - effective_bar_height) / cell_height
+      if (new_term_rows /= term_rows) then
+        term_rows = new_term_rows
+        tab_mgr%term_rows = term_rows
+        do ii = 1, tab_mgr%count
+          do kk = 1, tab_mgr%tabs(ii)%pane_count
+            call pty_resize(tab_mgr%tabs(ii)%panes(kk)%pty, term_rows, term_cols)
+            call terminal_resize(tab_mgr%tabs(ii)%panes(kk)%term, term_rows, term_cols)
+          end do
+        end do
+      end if
+      ! Recalculate layout for active tab
+      call tab_manager_recalculate_layout(tab_mgr, 0, effective_bar_height, &
+                                          win_width, win_height - effective_bar_height, &
+                                          cell_width, cell_height)
+    end if
+
+    ! Update pointers after tab change
+    term => tab_manager_get_active_term(tab_mgr)
+    active_pty => tab_manager_get_active_pty(tab_mgr)
+  end subroutine handle_tab_action
+
+  ! Handle pane action signals from keyboard
+  subroutine handle_pane_action(action)
+    use window_mod, only: PANE_ACTION_SPLIT_V, PANE_ACTION_SPLIT_H, &
+                          PANE_ACTION_NAV_LEFT, PANE_ACTION_NAV_RIGHT, &
+                          PANE_ACTION_NAV_UP, PANE_ACTION_NAV_DOWN
+    integer, intent(in) :: action
+    integer :: effective_bar_height
+
+    ! Calculate effective tab bar height
+    if (tab_mgr%count > 1) then
+      effective_bar_height = tab_mgr%bar_height
+    else
+      effective_bar_height = 0
+    end if
+
+    select case (action)
+      case (PANE_ACTION_SPLIT_V)
+        ! Split vertically (side-by-side)
+        call tab_manager_split_pane_v(tab_mgr)
+        ! Apply cursor settings from config to new pane
+        active_pane => tab_manager_get_active_pane(tab_mgr)
+        if (associated(active_pane)) then
+          active_pane%term%cursor%style = cfg%cursor_style
+          active_pane%term%cursor%blink = cfg%cursor_blink
+        end if
+        ! Recalculate layout
+        call tab_manager_recalculate_layout(tab_mgr, 0, effective_bar_height, &
+                                            win_width, win_height - effective_bar_height, &
+                                            cell_width, cell_height)
+
+      case (PANE_ACTION_SPLIT_H)
+        ! Split horizontally (stacked)
+        call tab_manager_split_pane_h(tab_mgr)
+        ! Apply cursor settings from config to new pane
+        active_pane => tab_manager_get_active_pane(tab_mgr)
+        if (associated(active_pane)) then
+          active_pane%term%cursor%style = cfg%cursor_style
+          active_pane%term%cursor%blink = cfg%cursor_blink
+        end if
+        ! Recalculate layout
+        call tab_manager_recalculate_layout(tab_mgr, 0, effective_bar_height, &
+                                            win_width, win_height - effective_bar_height, &
+                                            cell_width, cell_height)
+
+      case (PANE_ACTION_NAV_LEFT)
+        call tab_manager_navigate_pane(tab_mgr, DIR_LEFT)
+
+      case (PANE_ACTION_NAV_RIGHT)
+        call tab_manager_navigate_pane(tab_mgr, DIR_RIGHT)
+
+      case (PANE_ACTION_NAV_UP)
+        call tab_manager_navigate_pane(tab_mgr, DIR_UP)
+
+      case (PANE_ACTION_NAV_DOWN)
+        call tab_manager_navigate_pane(tab_mgr, DIR_DOWN)
+    end select
+
+    ! Update pointers after pane change
+    term => tab_manager_get_active_term(tab_mgr)
+    active_pty => tab_manager_get_active_pty(tab_mgr)
+  end subroutine handle_pane_action
 
 end program fortty
