@@ -182,6 +182,20 @@ contains
     ! Terminal settings
     cfg%scrollback_lines = toml_get_integer(tf, 'terminal', 'scrollback_lines', cfg%scrollback_lines)
 
+    ! Cursor settings
+    str_val = toml_get_string(tf, 'cursor', 'style', '')
+    if (len_trim(str_val) > 0) then
+      select case (trim(str_val))
+        case ('block')
+          cfg%cursor_style = 0
+        case ('underline')
+          cfg%cursor_style = 1
+        case ('bar', 'beam')
+          cfg%cursor_style = 2
+      end select
+    end if
+    cfg%cursor_blink = toml_get_logical(tf, 'cursor', 'blink', cfg%cursor_blink)
+
     ! Shell settings
     str_val = toml_get_string(tf, 'shell', 'program', '')
     if (len_trim(str_val) > 0) cfg%shell_program = str_val

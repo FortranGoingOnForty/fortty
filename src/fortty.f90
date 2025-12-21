@@ -192,6 +192,10 @@ program fortty
   call terminal_init(term, term_rows, term_cols)
   call parser_init(parser)
 
+  ! Apply cursor settings from config
+  term%cursor%style = cfg%cursor_style
+  term%cursor%blink = cfg%cursor_blink
+
   ! Open PTY with shell
   pty = pty_open("", term_rows, term_cols)  ! Empty string = use $SHELL
 
