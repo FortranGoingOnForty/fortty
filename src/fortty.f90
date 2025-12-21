@@ -97,8 +97,15 @@ program fortty
   end if
 
   ! If no configured fallback or it failed, try fontconfig auto-detection
+  ! First try to find a font with common Unicode symbols (chevron, arrows, etc.)
   if (.not. ren%font%has_fallback) then
-    ! Try Nerd Font-specific devicons first (U+E5FF), then common icons (U+F07B)
+    fallback_path = font_find_for_codepoint(int(z'276F'))  ! Heavy right-pointing angle (❯)
+    if (len_trim(fallback_path) > 0) then
+      call renderer_load_fallback_font(ren, trim(fallback_path))
+    end if
+  end if
+  ! Then try Nerd Font-specific devicons
+  if (.not. ren%font%has_fallback) then
     fallback_path = font_find_for_codepoint(int(z'E5FF'))  ! Nerd Font devicon
     if (len_trim(fallback_path) > 0) then
       call renderer_load_fallback_font(ren, trim(fallback_path))
@@ -117,7 +124,20 @@ program fortty
     end if
   end if
 
-  ! If fontconfig didn't work, try hardcoded paths
+  ! If fontconfig didn't work, try hardcoded paths (macOS)
+  if (.not. ren%font%has_fallback) then
+    fallback_path = "/System/Library/Fonts/Apple Symbols.ttf"
+    call renderer_load_fallback_font(ren, trim(fallback_path))
+  end if
+  if (.not. ren%font%has_fallback) then
+    fallback_path = "/Library/Fonts/MesloLGLDZNerdFontMono-Regular.ttf"
+    call renderer_load_fallback_font(ren, trim(fallback_path))
+  end if
+  if (.not. ren%font%has_fallback) then
+    fallback_path = "/Library/Fonts/MesloLGMNerdFontMono-Regular.ttf"
+    call renderer_load_fallback_font(ren, trim(fallback_path))
+  end if
+  ! Linux paths
   if (.not. ren%font%has_fallback) then
     fallback_path = "/usr/share/fonts/TTF/MesloLGLDZNerdFontMono-Regular.ttf"
     call renderer_load_fallback_font(ren, trim(fallback_path))
@@ -281,14 +301,14 @@ program fortty
 
           x = real(col - 1) * cell_width
 
+          ! Draw selection background if selected (for all cells including spaces)
+          if (selection_contains(sel, row, col)) then
+            call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                    0.3, 0.3, 0.6, 1.0)
+          end if
+
           ! Only render cells with actual text content
           if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
-            ! Draw selection background if selected (only for text cells)
-            if (selection_contains(sel, row, col)) then
-              call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                      0.3, 0.3, 0.6, 1.0)
-            end if
-
             r = real(cell%fg%r) / 255.0
             g = real(cell%fg%g) / 255.0
             b = real(cell%fg%b) / 255.0
@@ -308,13 +328,14 @@ program fortty
 
             x = real(col - 1) * cell_width
 
+            ! Draw selection background if selected (for all cells including spaces)
+            if (selection_contains(sel, row, col)) then
+              call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
+                                      0.3, 0.3, 0.6, 1.0)
+            end if
+
             ! Only render cells with actual text content
             if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
-              ! Draw selection background if selected (only for text cells)
-              if (selection_contains(sel, row, col)) then
-                call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                        0.3, 0.3, 0.6, 1.0)
-              end if
               r = real(cell%fg%r) / 255.0
               g = real(cell%fg%g) / 255.0
               b = real(cell%fg%b) / 255.0
