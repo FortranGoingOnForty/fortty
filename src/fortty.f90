@@ -51,8 +51,13 @@ program fortty
   win_width = cfg%window_width
   win_height = cfg%window_height
 
-  ! Create window with OpenGL context
-  win = window_create(win_width, win_height, "fortty")
+  ! Create window with OpenGL context (enable transparency if opacity < 1.0)
+  win = window_create(win_width, win_height, "fortty", cfg%window_opacity < 1.0)
+
+  ! Enable background blur if configured (macOS only)
+  if (cfg%window_blur) then
+    call window_set_blur(win, .true.)
+  end if
 
   ! Font path - use config if specified, otherwise fontconfig, then fallbacks
   if (len_trim(cfg%font_path) > 0) then
@@ -258,11 +263,11 @@ program fortty
       call window_set_title(win, terminal_get_title(term))
     end if
 
-    ! Clear screen with background color from config
+    ! Clear screen with background color and opacity from config
     bg_r = real(cfg%bg_color%r) / 255.0
     bg_g = real(cfg%bg_color%g) / 255.0
     bg_b = real(cfg%bg_color%b) / 255.0
-    call glClearColor(bg_r, bg_g, bg_b, 1.0)
+    call glClearColor(bg_r, bg_g, bg_b, cfg%window_opacity)
     call glClear(GL_COLOR_BUFFER_BIT)
 
     ! Render terminal buffer

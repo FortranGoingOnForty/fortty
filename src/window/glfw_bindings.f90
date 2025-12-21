@@ -14,6 +14,7 @@ module glfw_bindings
   integer(c_int), parameter :: GLFW_OPENGL_PROFILE = int(Z'00022008', c_int)
   integer(c_int), parameter :: GLFW_OPENGL_CORE_PROFILE = int(Z'00032001', c_int)
   integer(c_int), parameter :: GLFW_OPENGL_FORWARD_COMPAT = int(Z'00022006', c_int)
+  integer(c_int), parameter :: GLFW_TRANSPARENT_FRAMEBUFFER = int(Z'0002000A', c_int)
 
   ! Key constants
   integer(c_int), parameter :: GLFW_KEY_ESCAPE = 256

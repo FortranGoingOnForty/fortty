@@ -11,6 +11,8 @@ module config_mod
     ! Window
     integer :: window_width = 800
     integer :: window_height = 600
+    real :: window_opacity = 1.0      ! 0.0 (transparent) to 1.0 (opaque)
+    logical :: window_blur = .false.  ! macOS only: enable background blur
 
     ! Font
     character(len=256) :: font_path = ''       ! Empty = use fontconfig
@@ -41,6 +43,8 @@ contains
 
     cfg%window_width = 800
     cfg%window_height = 600
+    cfg%window_opacity = 1.0
+    cfg%window_blur = .false.
 
     cfg%font_path = ''
     cfg%font_fallback = ''
@@ -133,6 +137,8 @@ contains
     ! Window settings
     cfg%window_width = toml_get_integer(tf, 'window', 'width', cfg%window_width)
     cfg%window_height = toml_get_integer(tf, 'window', 'height', cfg%window_height)
+    cfg%window_opacity = toml_get_real(tf, 'window', 'opacity', cfg%window_opacity)
+    cfg%window_blur = toml_get_logical(tf, 'window', 'blur', cfg%window_blur)
 
     ! Font settings
     str_val = toml_get_string(tf, 'font', 'family', '')

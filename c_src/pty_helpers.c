@@ -202,3 +202,13 @@ int fortty_pty_child_alive(void) {
 int fortty_pty_get_child_pid(void) {
     return (int)child_pid;
 }
+
+/*
+ * Window blur stub - macOS blur requires Cocoa framework which has
+ * CMake integration issues with Fortran. This is a no-op placeholder.
+ * TODO: Implement with NSVisualEffectView when build system supports it.
+ */
+void fortty_set_window_blur(void* window, int enable) {
+    (void)window;
+    (void)enable;
+}

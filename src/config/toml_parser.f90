@@ -4,7 +4,7 @@ module toml_parser_mod
 
   public :: toml_file_t
   public :: toml_open, toml_close
-  public :: toml_get_string, toml_get_integer, toml_get_logical
+  public :: toml_get_string, toml_get_integer, toml_get_real, toml_get_logical
 
   integer, parameter :: MAX_LINE_LEN = 512
   integer, parameter :: MAX_KEYS = 128
@@ -186,6 +186,25 @@ contains
     end if
 
   end function toml_get_integer
+
+  ! Get a real value from the TOML file
+  function toml_get_real(tf, section, key, default) result(val)
+    type(toml_file_t), intent(in) :: tf
+    character(len=*), intent(in) :: section, key
+    real, intent(in) :: default
+    real :: val
+    character(len=256) :: str_val
+    integer :: ios
+
+    val = default
+    str_val = toml_get_string(tf, section, key, '')
+
+    if (len_trim(str_val) > 0) then
+      read(str_val, *, iostat=ios) val
+      if (ios /= 0) val = default
+    end if
+
+  end function toml_get_real
 
   ! Get a logical value from the TOML file
   function toml_get_logical(tf, section, key, default) result(val)

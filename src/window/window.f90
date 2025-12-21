@@ -13,7 +13,7 @@ module window_mod
   public :: window_create, window_destroy
   public :: window_should_close, window_swap_buffers, window_poll_events
   public :: window_get_size, window_set_pty, window_set_terminal
-  public :: window_set_title, window_set_cell_size
+  public :: window_set_title, window_set_cell_size, window_set_blur
   public :: window_get_selection, window_clipboard_set, window_clipboard_get
 
   type :: window_t
@@ -45,13 +45,21 @@ module window_mod
     integer(c_int) function fortty_load_gl() bind(C, name="fortty_load_gl")
       import :: c_int
     end function fortty_load_gl
+
+    ! macOS window blur (no-op on other platforms)
+    subroutine fortty_set_window_blur_c(window, enable) bind(C, name="fortty_set_window_blur")
+      import :: c_ptr, c_int
+      type(c_ptr), value :: window
+      integer(c_int), value :: enable
+    end subroutine fortty_set_window_blur_c
   end interface
 
 contains
 
-  function window_create(width, height, title) result(win)
+  function window_create(width, height, title, transparent) result(win)
     integer, intent(in) :: width, height
     character(len=*), intent(in) :: title
+    logical, intent(in), optional :: transparent
     type(window_t) :: win
     type(c_funptr) :: dummy
     integer(c_int) :: gl_loaded
@@ -71,6 +79,13 @@ contains
     call glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3)
     call glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE)
     call glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE)
+
+    ! Enable transparent framebuffer if requested (for window opacity)
+    if (present(transparent)) then
+      if (transparent) then
+        call glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE)
+      end if
+    end if
 
     ! Create window
     c_title = trim(title) // c_null_char
@@ -476,6 +491,20 @@ contains
     c_title = trim(title) // c_null_char
     call glfwSetWindowTitle(win%handle, c_title)
   end subroutine window_set_title
+
+  ! Enable background blur (macOS only, no-op on other platforms)
+  subroutine window_set_blur(win, enable)
+    type(window_t), intent(in) :: win
+    logical, intent(in) :: enable
+
+    if (.not. c_associated(win%handle)) return
+
+    if (enable) then
+      call fortty_set_window_blur_c(win%handle, 1_c_int)
+    else
+      call fortty_set_window_blur_c(win%handle, 0_c_int)
+    end if
+  end subroutine window_set_blur
 
   ! Set cell dimensions for mouse coordinate conversion
   subroutine window_set_cell_size(w, h)
