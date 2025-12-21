@@ -49,6 +49,7 @@ module terminal_mod
     logical :: mode_autowrap = .true.   ! Auto-wrap at end of line
     logical :: mode_origin = .false.    ! Origin mode (cursor relative to scroll region)
     logical :: mode_insert = .false.    ! Insert mode
+    logical :: pending_wrap = .false.   ! Deferred wrap: cursor at EOL, wrap on next char
 
     ! Tab stops
     logical, allocatable :: tabstops(:)
@@ -182,6 +183,13 @@ contains
     ! Skip zero-width characters (combining marks, etc.)
     if (width == 0) return
 
+    ! Handle deferred wrap: if pending, execute wrap now before writing new char
+    if (term%pending_wrap) then
+      call terminal_newline(term)
+      term%cursor%col = 1
+      term%pending_wrap = .false.
+    end if
+
     ! Check if wide character fits before line end
     if (width == 2 .and. term%cursor%col + 1 > term%cols) then
       if (term%mode_autowrap) then
@@ -218,11 +226,12 @@ contains
     ! Advance cursor by character width
     term%cursor%col = term%cursor%col + width
 
-    ! Handle wrap at end of line
+    ! Handle wrap at end of line - use deferred wrap
     if (term%cursor%col > term%cols) then
       if (term%mode_autowrap) then
-        call terminal_newline(term)
-        term%cursor%col = 1
+        ! Don't wrap yet - set pending flag, wrap on next char
+        term%cursor%col = term%cols  ! Keep cursor at last column
+        term%pending_wrap = .true.
       else
         term%cursor%col = term%cols  ! Stay at edge
       end if
@@ -247,12 +256,15 @@ contains
     type(terminal_t), intent(inout) :: term
 
     term%cursor%col = 1
+    term%pending_wrap = .false.  ! Cancel deferred wrap
   end subroutine terminal_carriage_return
 
   ! Move to next tab stop
   subroutine terminal_tab(term)
     type(terminal_t), intent(inout) :: term
     integer :: col
+
+    term%pending_wrap = .false.  ! Cancel deferred wrap
 
     do col = term%cursor%col + 1, term%cols
       if (term%tabstops(col)) then
@@ -269,6 +281,7 @@ contains
   subroutine terminal_backspace(term)
     type(terminal_t), intent(inout) :: term
 
+    term%pending_wrap = .false.  ! Cancel deferred wrap
     if (term%cursor%col > 1) then
       term%cursor%col = term%cursor%col - 1
     end if
@@ -392,6 +405,7 @@ contains
     type(terminal_t), intent(inout) :: term
     integer, intent(in) :: row, col
 
+    term%pending_wrap = .false.  ! Cancel deferred wrap
     term%cursor%row = max(1, min(row, term%rows))
     term%cursor%col = max(1, min(col, term%cols))
   end subroutine terminal_cursor_move
@@ -401,6 +415,7 @@ contains
     type(terminal_t), intent(inout) :: term
     integer, intent(in) :: n
 
+    term%pending_wrap = .false.  ! Cancel deferred wrap
     term%cursor%row = max(1, term%cursor%row - n)
   end subroutine terminal_cursor_up
 
@@ -409,6 +424,7 @@ contains
     type(terminal_t), intent(inout) :: term
     integer, intent(in) :: n
 
+    term%pending_wrap = .false.  ! Cancel deferred wrap
     term%cursor%row = min(term%rows, term%cursor%row + n)
   end subroutine terminal_cursor_down
 
@@ -417,6 +433,7 @@ contains
     type(terminal_t), intent(inout) :: term
     integer, intent(in) :: n
 
+    term%pending_wrap = .false.  ! Cancel deferred wrap
     term%cursor%col = min(term%cols, term%cursor%col + n)
   end subroutine terminal_cursor_forward
 
@@ -425,6 +442,7 @@ contains
     type(terminal_t), intent(inout) :: term
     integer, intent(in) :: n
 
+    term%pending_wrap = .false.  ! Cancel deferred wrap
     term%cursor%col = max(1, term%cursor%col - n)
   end subroutine terminal_cursor_backward
 
@@ -628,6 +646,7 @@ contains
     term%mode_autowrap = .true.
     term%mode_origin = .false.
     term%mode_insert = .false.
+    term%pending_wrap = .false.
 
     ! Reset cursor
     term%cursor%row = 1

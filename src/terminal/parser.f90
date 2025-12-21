@@ -367,6 +367,13 @@ contains
       return
     end if
 
+    ! Handle DA2 (CSI > c) - Secondary Device Attributes
+    if (p%has_private .and. p%private_marker == '>' .and. cmd == 99) then
+      ! Respond: CSI > 0 ; 10 ; 0 c (xterm-compatible: type=0, version=10, rom=0)
+      call terminal_queue_response(term, char(27) // '[>0;10;0c')
+      return
+    end if
+
     ! Handle DECSCUSR (CSI Ps SP q) - Set Cursor Style
     if (p%has_intermediate .and. p%intermediate == ' ' .and. cmd == 113) then
       ! Ps=0,1: blinking block, Ps=2: steady block
@@ -461,9 +468,10 @@ contains
         end if
 
       case (99)  ! 'c' - DA1 (Primary Device Attributes)
-        ! Respond with VT102 identification: ESC [ ? 6 c
+        ! Respond as VT220 with ANSI color support
+        ! 62=VT220, 22=ANSI color
         if (p%param_count == 0 .or. (p%param_count == 1 .and. p%params(1) == 0)) then
-          call terminal_queue_response(term, char(27) // '[?6c')
+          call terminal_queue_response(term, char(27) // '[?62;22c')
         end if
 
       case (110)  ! 'n' - DSR (Device Status Report)
