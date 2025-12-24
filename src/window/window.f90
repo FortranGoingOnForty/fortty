@@ -196,7 +196,11 @@ contains
   end subroutine window_swap_buffers
 
   subroutine window_poll_events()
-    call glfwPollEvents()
+    ! Use WaitEventsTimeout instead of PollEvents for Wayland compatibility
+    ! This allows the compositor to send ping-pong messages to verify the app
+    ! is responsive, even when on an inactive workspace. 10ms timeout provides
+    ! ~100Hz max update rate while allowing proper event processing.
+    call glfwWaitEventsTimeout(0.01d0)
   end subroutine window_poll_events
 
   ! Get current framebuffer size

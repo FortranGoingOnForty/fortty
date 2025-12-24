@@ -235,6 +235,14 @@ module glfw_bindings
     subroutine glfwPollEvents() bind(C, name="glfwPollEvents")
     end subroutine glfwPollEvents
 
+    ! void glfwWaitEventsTimeout(double timeout)
+    ! Waits for events with timeout in seconds - critical for Wayland compositor
+    ! responsiveness when window is on inactive workspace
+    subroutine glfwWaitEventsTimeout(timeout) bind(C, name="glfwWaitEventsTimeout")
+      import :: c_double
+      real(c_double), value :: timeout
+    end subroutine glfwWaitEventsTimeout
+
     ! double glfwGetTime(void)
     real(c_double) function glfwGetTime() bind(C, name="glfwGetTime")
       import :: c_double
