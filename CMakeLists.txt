@@ -112,6 +112,8 @@ endif()
 # For Linux, we need dl for GLAD's dlopen
 if(UNIX AND NOT APPLE)
     target_link_libraries(fortty PRIVATE dl)
+    # Mark stack as non-executable to suppress linker warning
+    target_link_options(fortty PRIVATE -Wl,-z,noexecstack)
 endif()
 
 # TODO: Link Cocoa framework for blur when CMake framework flag issue is resolved

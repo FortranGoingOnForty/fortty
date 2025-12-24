@@ -231,6 +231,9 @@ contains
     type(c_ptr), value :: window
     integer(c_int), value :: width, height
 
+    ! Unused argument (required by GLFW callback signature)
+    if (.false.) print *, transfer(window, 0_c_int)
+
     call glViewport(0, 0, width, height)
 
     ! Mark that we're in a resize operation and trigger a redraw
@@ -244,6 +247,9 @@ contains
   ! Callback: handle window refresh (called when window needs redrawing)
   subroutine window_refresh_callback(window) bind(C)
     type(c_ptr), value :: window
+
+    ! Unused argument (required by GLFW callback signature)
+    if (.false.) print *, transfer(window, 0_c_int)
 
     ! Trigger a redraw via the render callback
     if (associated(render_callback)) then
@@ -271,6 +277,9 @@ contains
     integer(c_int), value :: key, scancode, action, mods
     character(len=16) :: seq
     integer :: seq_len
+
+    ! Unused argument (required by GLFW callback signature)
+    if (.false.) print *, scancode
 
     ! Only process press and repeat events
     if (action == GLFW_RELEASE) return
@@ -516,6 +525,9 @@ contains
     character(len=4) :: utf8
     integer :: utf8_len
 
+    ! Unused argument (required by GLFW callback signature)
+    if (.false.) print *, transfer(window, 0_c_int)
+
     if (.not. associated(active_pty)) return
 
     ! Convert Unicode codepoint to UTF-8
@@ -646,6 +658,9 @@ contains
     integer(c_int), value :: error_code
     type(c_ptr), value :: description
 
+    ! Unused argument (required by GLFW callback signature)
+    if (.false.) print *, transfer(description, 0_c_int)
+
     print *, "GLFW Error ", error_code
   end subroutine error_callback
 
@@ -654,6 +669,9 @@ contains
     type(c_ptr), value :: window
     real(c_double), value :: xoffset, yoffset
     integer :: scroll_lines
+
+    ! Unused arguments (required by GLFW callback signature)
+    if (.false.) print *, transfer(window, 0_c_int), xoffset
 
     if (.not. associated(active_term)) return
 
@@ -752,6 +770,9 @@ contains
     real(c_double) :: xpos, ypos
     integer :: col, row
 
+    ! Unused argument (required by GLFW callback signature)
+    if (.false.) print *, mods
+
     ! Only handle left mouse button for selection
     if (button /= GLFW_MOUSE_BUTTON_LEFT) return
 
@@ -785,6 +806,9 @@ contains
     type(c_ptr), value :: window
     real(c_double), value :: xpos, ypos
     integer :: col, row
+
+    ! Unused argument (required by GLFW callback signature)
+    if (.false.) print *, transfer(window, 0_c_int)
 
     ! Only update if actively selecting
     if (.not. active_selection%selecting) return

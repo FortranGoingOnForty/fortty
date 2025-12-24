@@ -73,7 +73,7 @@ contains
     active = sel%active
   end function selection_is_active
 
-  subroutine selection_normalize(sel, r1, c1, r2, c2)
+  pure subroutine selection_normalize(sel, r1, c1, r2, c2)
     type(selection_t), intent(in) :: sel
     integer, intent(out) :: r1, c1, r2, c2
 
@@ -99,7 +99,7 @@ contains
     call selection_normalize(sel, r1, c1, r2, c2)
   end subroutine selection_get_bounds
 
-  function selection_contains(sel, row, col) result(contains)
+  pure function selection_contains(sel, row, col) result(contains)
     type(selection_t), intent(in) :: sel
     integer, intent(in) :: row, col
     logical :: contains

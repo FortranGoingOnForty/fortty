@@ -363,7 +363,7 @@ contains
 
     ! Handle private sequences (CSI ? ...)
     if (p%has_private .and. p%private_marker == '?') then
-      call dispatch_dec_private(p, term, cmd, n)
+      call dispatch_dec_private(term, cmd, n)
       return
     end if
 
@@ -514,8 +514,7 @@ contains
   end subroutine terminal_erase_chars
 
   ! Dispatch DEC private mode sequences (CSI ? n h/l)
-  subroutine dispatch_dec_private(p, term, cmd, mode)
-    type(parser_t), intent(inout) :: p
+  subroutine dispatch_dec_private(term, cmd, mode)
     type(terminal_t), intent(inout) :: term
     integer, intent(in) :: cmd, mode
     logical :: set_mode
@@ -580,7 +579,6 @@ contains
     type(parser_t), intent(inout) :: p
     type(terminal_t), intent(inout) :: term
     integer :: i, param
-    type(color_t) :: c
 
     ! Default: SGR 0 (reset)
     if (p%param_count == 0) then
