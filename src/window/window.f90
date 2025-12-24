@@ -231,8 +231,8 @@ contains
     type(c_ptr), value :: window
     integer(c_int), value :: width, height
 
-    ! Unused argument (required by GLFW callback signature)
-    if (.false.) print *, transfer(window, 0_c_int)
+    ! Suppress unused argument warning (required by GLFW callback signature)
+    if (.false. .and. c_associated(window)) continue
 
     call glViewport(0, 0, width, height)
 
@@ -248,8 +248,8 @@ contains
   subroutine window_refresh_callback(window) bind(C)
     type(c_ptr), value :: window
 
-    ! Unused argument (required by GLFW callback signature)
-    if (.false.) print *, transfer(window, 0_c_int)
+    ! Suppress unused argument warning (required by GLFW callback signature)
+    if (.false. .and. c_associated(window)) continue
 
     ! Trigger a redraw via the render callback
     if (associated(render_callback)) then
@@ -525,8 +525,8 @@ contains
     character(len=4) :: utf8
     integer :: utf8_len
 
-    ! Unused argument (required by GLFW callback signature)
-    if (.false.) print *, transfer(window, 0_c_int)
+    ! Suppress unused argument warning (required by GLFW callback signature)
+    if (.false. .and. c_associated(window)) continue
 
     if (.not. associated(active_pty)) return
 
@@ -658,8 +658,8 @@ contains
     integer(c_int), value :: error_code
     type(c_ptr), value :: description
 
-    ! Unused argument (required by GLFW callback signature)
-    if (.false.) print *, transfer(description, 0_c_int)
+    ! Suppress unused argument warning (required by GLFW callback signature)
+    if (.false. .and. c_associated(description)) continue
 
     print *, "GLFW Error ", error_code
   end subroutine error_callback
@@ -670,8 +670,9 @@ contains
     real(c_double), value :: xoffset, yoffset
     integer :: scroll_lines
 
-    ! Unused arguments (required by GLFW callback signature)
-    if (.false.) print *, transfer(window, 0_c_int), xoffset
+    ! Suppress unused argument warnings (required by GLFW callback signature)
+    if (.false. .and. c_associated(window)) continue
+    if (.false. .and. xoffset > 0.0d0) continue
 
     if (.not. associated(active_term)) return
 
@@ -807,8 +808,8 @@ contains
     real(c_double), value :: xpos, ypos
     integer :: col, row
 
-    ! Unused argument (required by GLFW callback signature)
-    if (.false.) print *, transfer(window, 0_c_int)
+    ! Suppress unused argument warning (required by GLFW callback signature)
+    if (.false. .and. c_associated(window)) continue
 
     ! Only update if actively selecting
     if (.not. active_selection%selecting) return

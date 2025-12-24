@@ -5,9 +5,11 @@ project(fortty LANGUAGES Fortran C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# Compiler warnings
+# Compiler warnings and security flags
 if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
     add_compile_options(-Wall -Wextra -pedantic)
+    # Avoid trampolines which require executable stack
+    add_compile_options(-fno-trampolines)
 endif()
 
 # Find dependencies
@@ -112,8 +114,8 @@ endif()
 # For Linux, we need dl for GLAD's dlopen
 if(UNIX AND NOT APPLE)
     target_link_libraries(fortty PRIVATE dl)
-    # Mark stack as non-executable to suppress linker warning
-    target_link_options(fortty PRIVATE -Wl,-z,noexecstack)
+    # Note: Cannot use -Wl,-z,noexecstack as gfortran's internal procedures
+    # used as callbacks (do_render) require executable stack for trampolines
 endif()
 
 # TODO: Link Cocoa framework for blur when CMake framework flag issue is resolved
