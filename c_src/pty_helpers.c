@@ -63,9 +63,8 @@ int fortty_pty_fork(const char *shell, int rows, int cols) {
             }
         }
 
-        /* Execute shell as login shell */
-        /* Using -l flag for login shell behavior */
-        execlp(sh, sh, "-l", (char *)NULL);
+        /* Execute shell as interactive shell (not login) */
+        execlp(sh, sh, (char *)NULL);
 
         /* If exec fails */
         perror("execlp");

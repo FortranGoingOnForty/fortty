@@ -381,7 +381,13 @@ contains
           pending_pane_action = PANE_ACTION_NAV_DOWN
           return
 
-        ! Pane navigation with vim keys: Cmd/Ctrl + hjkl
+      end select
+    end if
+
+    ! Pane navigation with vim keys: Super/Cmd + hjkl only (not Ctrl)
+    ! This allows Ctrl+L (clear), Ctrl+H, etc. to pass through to the shell
+    if (iand(mods, GLFW_MOD_SUPER) /= 0 .and. iand(mods, GLFW_MOD_CONTROL) == 0) then
+      select case (key)
         case (GLFW_KEY_H)
           pending_pane_action = PANE_ACTION_NAV_LEFT
           return
