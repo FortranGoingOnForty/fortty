@@ -87,6 +87,7 @@ set(FORTRAN_SOURCES
     src/panes/layout.f90
     src/tabs/tab_manager.f90
     src/tabs/tab_bar.f90
+    src/render_state.f90
     src/fortty.f90
 )
 

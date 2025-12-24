@@ -1,6 +1,5 @@
 program fortty
   use window_mod
-  use selection_mod, only: selection_contains
   use gl_bindings
   use renderer_mod
   use font_mod, only: font_find_monospace, font_find_for_codepoint
@@ -8,14 +7,14 @@ program fortty
   use terminal_mod
   use parser_mod
   use screen_mod
-  use cell_mod, only: cell_t, set_palette_color, set_default_colors
+  use cell_mod, only: set_palette_color, set_default_colors
   use config_mod
-  use cursor_mod, only: CURSOR_BLOCK, CURSOR_UNDERLINE, CURSOR_BAR
   use glfw_bindings, only: glfwGetTime
   use tab_manager_mod
   use tab_bar_mod
   use pane_mod
   use layout_mod, only: DIR_LEFT, DIR_RIGHT, DIR_UP, DIR_DOWN
+  use render_state_mod, only: render_state_init, render_state_update_blink, do_render
   implicit none
 
   type(window_t) :: win
@@ -24,7 +23,6 @@ program fortty
   type(pane_t), pointer :: active_pane
   type(terminal_t), pointer :: term
   type(pty_t), pointer :: active_pty
-  type(cell_t) :: cell
   type(config_t) :: cfg
   integer :: win_width, win_height
   integer :: prev_width, prev_height
@@ -33,15 +31,12 @@ program fortty
   character(len=256) :: font_path, fallback_path
   character(len=4096) :: pty_buffer
   character(len=256) :: response_buf
-  integer :: nbytes, i, j, k, row, col, scroll_offset, sb_offset, screen_row
+  integer :: nbytes, i, j, k
   integer :: response_len, tab_action, pane_action, tab_bar_height
-  real :: x, y, r, g, b, bg_r, bg_g, bg_b
-  type(cell_t), allocatable :: sb_line(:)
   integer :: cell_width, cell_height, ascender  ! From font metrics
   real(8) :: current_time, last_time, blink_timer
   logical :: cursor_blink_visible, any_pty_alive
   logical :: was_focused, is_focused
-  type(selection_t) :: sel
   integer :: font_delta, new_font_size, base_font_size
   character(len=256) :: font_path_saved, fallback_path_saved
 
@@ -229,6 +224,10 @@ program fortty
   call window_set_pty(active_pty)
   call window_set_terminal(term)
 
+  ! Initialize render state module with pointers to program state
+  call render_state_init(win, ren, tab_mgr, cfg, cell_width, cell_height, ascender, &
+                         win_width, win_height)
+
   ! Register render callback for live resize support on macOS
   call window_set_render_callback(do_render)
 
@@ -251,6 +250,7 @@ program fortty
       cursor_blink_visible = .not. cursor_blink_visible
       blink_timer = 0.0d0
     end if
+    call render_state_update_blink(cursor_blink_visible)
 
     ! Poll events first - this ensures resize callbacks fire BEFORE we render
     ! so viewport and projection updates happen in the same frame
@@ -432,197 +432,11 @@ program fortty
   end do
 
   ! Cleanup
-  if (allocated(sb_line)) deallocate(sb_line)
   call tab_manager_destroy(tab_mgr)
   call renderer_destroy(ren)
   call window_destroy(win)
 
 contains
-
-  ! Internal render subroutine - can be called from main loop or resize callback
-  ! Has access to all program variables through host association
-  subroutine do_render()
-    integer :: render_width, render_height
-    integer :: pane_idx, tab_idx
-    integer :: scissor_x, scissor_y, scissor_w, scissor_h
-    real :: dim_factor, pane_x_offset, pane_y_offset
-    type(pane_t), pointer :: cur_pane
-    type(terminal_t), pointer :: pane_term
-    type(screen_t), pointer :: pane_scr
-
-    ! Get current window size and update projection if needed
-    ! This is critical for live resize - we need to update projection
-    ! to match the new viewport that was set by the framebuffer callback
-    call window_get_size(win, render_width, render_height)
-    if (render_width /= prev_width .or. render_height /= prev_height) then
-      prev_width = render_width
-      prev_height = render_height
-      win_width = render_width
-      win_height = render_height
-      call renderer_set_projection(ren, win_width, win_height)
-    end if
-
-    ! Clear screen with background color and opacity from config
-    bg_r = real(cfg%bg_color%r) / 255.0
-    bg_g = real(cfg%bg_color%g) / 255.0
-    bg_b = real(cfg%bg_color%b) / 255.0
-    call glClearColor(bg_r, bg_g, bg_b, cfg%window_opacity)
-    call glClear(GL_COLOR_BUFFER_BIT)
-
-    ! Render terminal buffer
-    call renderer_begin(ren)
-
-    ! Render tab bar at top
-    call tab_bar_render(ren, tab_mgr, win_width, tab_mgr%bar_height, cell_width, ascender)
-
-    ! Calculate effective tab bar height (hidden when only 1 tab)
-    if (tab_mgr%count > 1) then
-      tab_bar_height = tab_mgr%bar_height
-    else
-      tab_bar_height = 0
-    end if
-
-    ! Guard against no active tab
-    if (tab_mgr%active_index < 1 .or. tab_mgr%active_index > tab_mgr%count) then
-      call renderer_flush(ren)
-      call window_swap_buffers(win)
-      return
-    end if
-
-    tab_idx = tab_mgr%active_index
-
-    ! Get current selection for highlighting (only applies to active pane)
-    sel = window_get_selection()
-
-    ! Render each pane in the active tab
-    do pane_idx = 1, tab_mgr%tabs(tab_idx)%pane_count
-      cur_pane => tab_mgr%tabs(tab_idx)%panes(pane_idx)
-      pane_term => cur_pane%term
-      pane_scr => terminal_active_screen(pane_term)
-
-      ! Determine dimming factor (inactive panes are dimmed)
-      if (cur_pane%active) then
-        dim_factor = 1.0
-      else
-        dim_factor = 0.6
-      end if
-
-      ! Calculate pane offset for rendering
-      pane_x_offset = real(cur_pane%x)
-      pane_y_offset = real(cur_pane%y)
-
-      ! Enable scissor test for this pane's viewport
-      ! OpenGL uses bottom-left origin, so convert from top-left
-      scissor_x = cur_pane%x
-      scissor_y = win_height - cur_pane%y - cur_pane%height
-      scissor_w = cur_pane%width
-      scissor_h = cur_pane%height
-      call glEnable(GL_SCISSOR_TEST)
-      call glScissor(scissor_x, scissor_y, scissor_w, scissor_h)
-
-      scroll_offset = terminal_get_scroll_offset(pane_term)
-
-      ! Allocate/resize scrollback line buffer if needed
-      if (.not. allocated(sb_line)) then
-        allocate(sb_line(cur_pane%cols))
-      else if (size(sb_line) /= cur_pane%cols) then
-        deallocate(sb_line)
-        allocate(sb_line(cur_pane%cols))
-      end if
-
-      do row = 1, pane_scr%rows
-        ! Cell top-left y coordinate relative to pane
-        y = real(row - 1) * cell_height + pane_y_offset
-
-        ! Determine if this row shows scrollback or screen content
-        sb_offset = scroll_offset - row + 1
-
-        if (sb_offset > 0 .and. sb_offset <= terminal_get_scrollback_count(pane_term)) then
-          ! This row shows scrollback content
-          call terminal_get_scrollback_line(pane_term, sb_offset - 1, sb_line, cur_pane%cols)
-          do col = 1, min(cur_pane%cols, pane_scr%cols)
-            cell = sb_line(col)
-
-            ! Skip continuation cells (2nd half of wide chars)
-            if (cell%is_continuation) cycle
-
-            x = real(col - 1) * cell_width + pane_x_offset
-
-            ! Draw selection background if selected (only for active pane)
-            if (cur_pane%active .and. selection_contains(sel, row, col)) then
-              call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                      0.3, 0.3, 0.6, 1.0)
-            end if
-
-            ! Only render cells with actual text content
-            if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
-              r = real(cell%fg%r) / 255.0 * dim_factor
-              g = real(cell%fg%g) / 255.0 * dim_factor
-              b = real(cell%fg%b) / 255.0 * dim_factor
-              call renderer_draw_char(ren, x, y + real(ascender), cell%codepoint, r, g, b, 1.0)
-            end if
-          end do
-        else
-          ! This row shows screen content
-          screen_row = row - scroll_offset
-          if (screen_row >= 1 .and. screen_row <= pane_scr%rows) then
-            do col = 1, pane_scr%cols
-              cell = screen_get_cell(pane_scr, screen_row, col)
-
-              ! Skip continuation cells (2nd half of wide chars)
-              if (cell%is_continuation) cycle
-
-              x = real(col - 1) * cell_width + pane_x_offset
-
-              ! Draw selection background if selected (only for active pane)
-              if (cur_pane%active .and. selection_contains(sel, row, col)) then
-                call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                        0.3, 0.3, 0.6, 1.0)
-              end if
-
-              ! Only render cells with actual text content
-              if (cell%codepoint /= 32 .and. cell%codepoint /= 0) then
-                r = real(cell%fg%r) / 255.0 * dim_factor
-                g = real(cell%fg%g) / 255.0 * dim_factor
-                b = real(cell%fg%b) / 255.0 * dim_factor
-                call renderer_draw_char(ren, x, y + real(ascender), cell%codepoint, r, g, b, 1.0)
-              end if
-            end do
-          end if
-        end if
-      end do
-
-      ! Draw cursor if visible (only for active pane and when not scrolled back)
-      if (cur_pane%active .and. pane_term%cursor%visible .and. scroll_offset == 0) then
-        ! Check blink state - only hide cursor if blink is enabled and in off phase
-        if (.not. pane_term%cursor%blink .or. cursor_blink_visible) then
-          x = real(pane_term%cursor%col - 1) * cell_width + pane_x_offset
-          y = real(pane_term%cursor%row - 1) * cell_height + pane_y_offset
-
-          select case (pane_term%cursor%style)
-            case (CURSOR_BLOCK)
-              call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                      0.7, 0.7, 0.7, 0.8)
-            case (CURSOR_UNDERLINE)
-              call renderer_draw_rect(ren, x, y + real(ascender), &
-                                      real(cell_width), 2.0, 0.7, 0.7, 0.7, 1.0)
-            case (CURSOR_BAR)
-              call renderer_draw_rect(ren, x, y, 2.0, real(cell_height), 0.7, 0.7, 0.7, 1.0)
-            case default
-              call renderer_draw_rect(ren, x, y, real(cell_width), real(cell_height), &
-                                      0.7, 0.7, 0.7, 0.8)
-          end select
-        end if
-      end if
-
-      call glDisable(GL_SCISSOR_TEST)
-    end do
-
-    call renderer_flush(ren)
-
-    ! Swap buffers
-    call window_swap_buffers(win)
-  end subroutine do_render
 
   ! Handle tab action signals from keyboard
   subroutine handle_tab_action(action)
