@@ -40,6 +40,7 @@ program fortty
   integer :: cell_width, cell_height, ascender  ! From font metrics
   real(8) :: current_time, last_time, blink_timer
   logical :: cursor_blink_visible, any_pty_alive
+  logical :: was_focused, is_focused
   type(selection_t) :: sel
   integer :: font_delta, new_font_size, base_font_size
   character(len=256) :: font_path_saved, fallback_path_saved
@@ -236,6 +237,9 @@ program fortty
   blink_timer = 0.0d0
   cursor_blink_visible = .true.
 
+  ! Initialize focus tracking (assume focused initially to ensure first render)
+  was_focused = .true.
+
   ! Main event loop - exit when window closes or all tabs closed
   any_pty_alive = tab_manager_has_tabs(tab_mgr)
   do while (.not. window_should_close(win) .and. any_pty_alive)
@@ -416,8 +420,15 @@ program fortty
       end if
     end if
 
-    ! Render and swap
-    call do_render()
+    ! Render and swap - but only if window has focus or just regained focus
+    ! On Wayland, glfwSwapBuffers blocks waiting for frame callbacks when
+    ! the window is on an inactive workspace, causing compositor timeout.
+    ! Skip rendering when unfocused to keep event loop responsive.
+    is_focused = window_is_focused(win)
+    if (is_focused .or. was_focused) then
+      call do_render()
+    end if
+    was_focused = is_focused
   end do
 
   ! Cleanup

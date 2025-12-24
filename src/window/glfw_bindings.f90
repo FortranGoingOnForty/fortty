@@ -16,6 +16,11 @@ module glfw_bindings
   integer(c_int), parameter :: GLFW_OPENGL_FORWARD_COMPAT = int(Z'00022006', c_int)
   integer(c_int), parameter :: GLFW_TRANSPARENT_FRAMEBUFFER = int(Z'0002000A', c_int)
 
+  ! Window attributes (for glfwGetWindowAttrib)
+  integer(c_int), parameter :: GLFW_FOCUSED = int(Z'00020001', c_int)
+  integer(c_int), parameter :: GLFW_ICONIFIED = int(Z'00020002', c_int)
+  integer(c_int), parameter :: GLFW_VISIBLE = int(Z'00020004', c_int)
+
   ! Key constants
   integer(c_int), parameter :: GLFW_KEY_ESCAPE = 256
   integer(c_int), parameter :: GLFW_KEY_ENTER = 257
@@ -351,6 +356,14 @@ module glfw_bindings
       type(c_ptr), value :: window
       type(c_funptr), value :: callback
     end function glfwSetWindowRefreshCallback
+
+    ! int glfwGetWindowAttrib(GLFWwindow* window, int attrib)
+    integer(c_int) function glfwGetWindowAttrib(window, attrib) &
+        bind(C, name="glfwGetWindowAttrib")
+      import :: c_ptr, c_int
+      type(c_ptr), value :: window
+      integer(c_int), value :: attrib
+    end function glfwGetWindowAttrib
   end interface
 
 end module glfw_bindings

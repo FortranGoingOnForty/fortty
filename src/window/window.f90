@@ -19,6 +19,7 @@ module window_mod
   public :: window_set_render_callback, window_is_resizing
   public :: window_get_tab_action, window_clear_tab_action
   public :: window_get_pane_action, window_clear_pane_action
+  public :: window_is_focused
 
   ! Tab action constants
   integer, parameter, public :: TAB_ACTION_NONE = 0
@@ -188,6 +189,15 @@ contains
 
     should = glfwWindowShouldClose(win%handle) /= GLFW_FALSE
   end function window_should_close
+
+  ! Check if window has focus - used to skip rendering on Wayland when
+  ! window is on inactive workspace (prevents compositor timeout)
+  function window_is_focused(win) result(focused)
+    type(window_t), intent(in) :: win
+    logical :: focused
+
+    focused = glfwGetWindowAttrib(win%handle, GLFW_FOCUSED) /= GLFW_FALSE
+  end function window_is_focused
 
   subroutine window_swap_buffers(win)
     type(window_t), intent(in) :: win
