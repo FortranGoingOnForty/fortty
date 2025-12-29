@@ -532,6 +532,12 @@ contains
           if (target_tab <= tab_mgr%count) then
             call tab_manager_switch(tab_mgr, target_tab)
           end if
+        ! Check for close tab 1-9 (actions 20-28)
+        else if (action >= 20 .and. action <= 28) then
+          target_tab = action - 19  ! 20 -> close tab 1, 21 -> close tab 2, etc.
+          if (target_tab <= tab_mgr%count) then
+            call tab_manager_close(tab_mgr, target_tab)
+          end if
         end if
     end select
 

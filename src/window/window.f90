@@ -21,6 +21,7 @@ module window_mod
   public :: window_get_pane_action, window_clear_pane_action
   public :: window_is_focused
   public :: window_set_tab_bar_info
+  public :: window_get_tab_hover
 
   ! Tab action constants
   integer, parameter, public :: TAB_ACTION_NONE = 0
@@ -77,6 +78,10 @@ module window_mod
   integer, save :: tab_bar_height = 0       ! 0 when hidden (1 tab), else ~28
   integer, save :: tab_count = 1            ! Number of tabs
   integer, save :: tab_bar_win_width = 800  ! Window width for tab width calc
+
+  ! Tab bar hover state
+  integer, save :: hover_tab_index = 0      ! Which tab mouse is over (0 = none)
+  logical, save :: hover_on_close_btn = .false.  ! Is mouse over close button?
 
   ! Live resize rendering support
   logical, save :: is_resizing = .false.
@@ -777,7 +782,7 @@ contains
     real(c_double) :: xpos, ypos
     integer :: col, row
     integer :: clicked_tab
-    real :: tab_width
+    real :: tab_width, btn_x, btn_y
 
     ! Unused argument (required by GLFW callback signature)
     if (.false.) print *, mods
@@ -798,8 +803,18 @@ contains
 
         clicked_tab = int(xpos / tab_width) + 1
         if (clicked_tab >= 1 .and. clicked_tab <= tab_count) then
-          ! Set pending action: 10 = tab 1, 11 = tab 2, etc.
-          pending_tab_action = 9 + clicked_tab
+          ! Check if clicking the close button (14x14 button, 6px from right edge)
+          btn_x = real(clicked_tab - 1) * tab_width + tab_width - 6.0 - 14.0
+          btn_y = (real(tab_bar_height) - 14.0) / 2.0
+
+          if (real(xpos) >= btn_x .and. real(xpos) <= btn_x + 14.0 .and. &
+              real(ypos) >= btn_y .and. real(ypos) <= btn_y + 14.0) then
+            ! Clicked close button - set action: 20 = close tab 1, 21 = close tab 2, etc.
+            pending_tab_action = 19 + clicked_tab
+          else
+            ! Clicked tab body - switch to tab: 10 = tab 1, 11 = tab 2, etc.
+            pending_tab_action = 9 + clicked_tab
+          end if
         end if
         return  ! Don't start text selection when clicking tabs
       end if
@@ -834,16 +849,39 @@ contains
     type(c_ptr), value :: window
     real(c_double), value :: xpos, ypos
     integer :: col, row
+    real :: tab_width, btn_x, btn_y, btn_size
 
     ! Suppress unused argument warning (required by GLFW callback signature)
     if (.false. .and. c_associated(window)) continue
 
-    ! Only update if actively selecting
+    ! Track tab bar hover state for close button highlighting
+    if (tab_bar_height > 0 .and. tab_count > 1 .and. int(ypos) < tab_bar_height) then
+      ! Mouse is in tab bar - calculate which tab
+      tab_width = real(tab_bar_win_width) / real(tab_count)
+      if (tab_width > 200.0) tab_width = 200.0
+      if (tab_width < 80.0) tab_width = 80.0
+
+      hover_tab_index = int(xpos / tab_width) + 1
+      if (hover_tab_index > tab_count) hover_tab_index = tab_count
+
+      ! Check if over close button (14x14 button, 6px from right edge)
+      btn_size = 14.0
+      btn_x = real(hover_tab_index - 1) * tab_width + tab_width - 6.0 - btn_size
+      btn_y = (real(tab_bar_height) - btn_size) / 2.0
+
+      hover_on_close_btn = (real(xpos) >= btn_x .and. real(xpos) <= btn_x + btn_size .and. &
+                           real(ypos) >= btn_y .and. real(ypos) <= btn_y + btn_size)
+    else
+      hover_tab_index = 0
+      hover_on_close_btn = .false.
+    end if
+
+    ! Only update selection if actively selecting
     if (.not. active_selection%selecting) return
 
     ! Convert pixel position to terminal cell coordinates (1-based)
     col = int(xpos / cell_width) + 1
-    row = int(ypos / cell_height) + 1
+    row = int((ypos - real(tab_bar_height)) / cell_height) + 1
 
     ! Clamp to valid range
     if (associated(active_term)) then
@@ -1000,5 +1038,13 @@ contains
     tab_count = count
     tab_bar_win_width = win_width
   end subroutine window_set_tab_bar_info
+
+  ! Get tab hover state for rendering close button highlights
+  subroutine window_get_tab_hover(tab_idx, on_close_btn)
+    integer, intent(out) :: tab_idx
+    logical, intent(out) :: on_close_btn
+    tab_idx = hover_tab_index
+    on_close_btn = hover_on_close_btn
+  end subroutine window_get_tab_hover
 
 end module window_mod

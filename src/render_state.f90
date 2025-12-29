@@ -77,6 +77,8 @@ contains
     integer :: render_width, render_height
     integer :: pane_idx, tab_idx, tab_bar_height
     integer :: scissor_x, scissor_y, scissor_w, scissor_h
+    integer :: hover_tab
+    logical :: hover_close
     real :: dim_factor, pane_x_offset, pane_y_offset
     real :: bg_r, bg_g, bg_b
     type(pane_t), pointer :: cur_pane
@@ -113,9 +115,12 @@ contains
     ! Render terminal buffer
     call renderer_begin(rs_ren)
 
+    ! Get tab hover state for close button highlighting
+    call window_get_tab_hover(hover_tab, hover_close)
+
     ! Render tab bar at top
     call tab_bar_render(rs_ren, rs_tab_mgr, rs_win_width, rs_tab_mgr%bar_height, &
-                        rs_cell_width, rs_ascender)
+                        rs_cell_width, rs_ascender, hover_tab, hover_close)
 
     ! Calculate effective tab bar height (hidden when only 1 tab)
     if (rs_tab_mgr%count > 1) then
