@@ -535,15 +535,17 @@ contains
         end if
     end select
 
+    ! Calculate effective bar height based on current tab count
+    if (tab_mgr%count > 1) then
+      effective_bar_height = tab_mgr%bar_height
+    else
+      effective_bar_height = 0
+    end if
+
     ! Check if tab bar visibility changed (1 <-> 2+ tabs)
     ! If so, resize all terminals to account for new available height
     if ((old_count == 1 .and. tab_mgr%count > 1) .or. &
         (old_count > 1 .and. tab_mgr%count == 1)) then
-      if (tab_mgr%count > 1) then
-        effective_bar_height = tab_mgr%bar_height
-      else
-        effective_bar_height = 0
-      end if
       new_term_rows = (win_height - effective_bar_height) / cell_height
       if (new_term_rows /= term_rows) then
         term_rows = new_term_rows
@@ -555,11 +557,13 @@ contains
           end do
         end do
       end if
-      ! Recalculate layout for active tab
-      call tab_manager_recalculate_layout(tab_mgr, 0, effective_bar_height, &
-                                          win_width, win_height - effective_bar_height, &
-                                          cell_width, cell_height)
     end if
+
+    ! Always recalculate layout for active tab after any tab action
+    ! This ensures the pane has correct y-offset when tab bar is visible
+    call tab_manager_recalculate_layout(tab_mgr, 0, effective_bar_height, &
+                                        win_width, win_height - effective_bar_height, &
+                                        cell_width, cell_height)
 
     ! Update pointers after tab change
     term => tab_manager_get_active_term(tab_mgr)
