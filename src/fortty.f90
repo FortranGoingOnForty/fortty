@@ -67,25 +67,25 @@ program fortty
     print *, "Using configured font: ", trim(font_path)
   else
     font_path = font_find_monospace()
-    if (len_trim(font_path) == 0) then
-      ! Fontconfig not available or failed - try common system locations
-      font_path = "/usr/share/fonts/TTF/DejaVuSansMono.ttf"
-    else
+    if (len_trim(font_path) > 0) then
       print *, "Using system monospace font: ", trim(font_path)
     end if
   end if
 
   ! Create renderer with font (using font size from config)
-  ren = renderer_create(trim(font_path), cfg%font_size)
-  if (.not. ren%initialized) then
-    print *, "Warning: Could not load font, trying alternate path..."
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+  ! Try configured/fontconfig path first, then fallback paths for various distros
+  if (len_trim(font_path) > 0) then
     ren = renderer_create(trim(font_path), cfg%font_size)
   end if
 
   if (.not. ren%initialized) then
+    call try_font_fallbacks(ren, cfg%font_size, font_path)
+  end if
+
+  if (.not. ren%initialized) then
     print *, "Error: Could not initialize renderer"
-    print *, "Please ensure a monospace font is installed"
+    print *, "Please ensure a monospace font is installed, or set font_path in config"
+    print *, "Config location: ~/.config/fortty/fortty.toml"
     call window_destroy(win)
     stop 1
   end if
@@ -437,6 +437,45 @@ program fortty
   call window_destroy(win)
 
 contains
+
+  ! Try multiple font fallback paths for different Linux distributions
+  subroutine try_font_fallbacks(ren, font_size, found_path)
+    type(renderer_t), intent(inout) :: ren
+    integer, intent(in) :: font_size
+    character(len=*), intent(out) :: found_path
+    character(len=256) :: fallback_paths(12)
+    integer :: i
+
+    ! Fallback paths for various Linux distributions
+    ! DejaVu Sans Mono - widely available
+    fallback_paths(1) = "/usr/share/fonts/TTF/DejaVuSansMono.ttf"                      ! Arch
+    fallback_paths(2) = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"          ! Debian/Ubuntu
+    fallback_paths(3) = "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf"   ! Fedora
+    ! Liberation Mono - common alternative
+    fallback_paths(4) = "/usr/share/fonts/TTF/LiberationMono-Regular.ttf"              ! Arch
+    fallback_paths(5) = "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"  ! Debian
+    fallback_paths(6) = "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf"  ! Fedora
+    ! Noto Sans Mono
+    fallback_paths(7) = "/usr/share/fonts/noto/NotoSansMono-Regular.ttf"               ! Common
+    fallback_paths(8) = "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf"      ! Debian
+    ! FreeMono (GNU FreeFont)
+    fallback_paths(9) = "/usr/share/fonts/TTF/FreeMono.ttf"                            ! Arch
+    fallback_paths(10) = "/usr/share/fonts/truetype/freefont/FreeMono.ttf"             ! Debian
+    ! Hack font (popular terminal font)
+    fallback_paths(11) = "/usr/share/fonts/TTF/Hack-Regular.ttf"                       ! Arch
+    fallback_paths(12) = "/usr/share/fonts/truetype/hack/Hack-Regular.ttf"             ! Debian
+
+    found_path = ''
+    do i = 1, size(fallback_paths)
+      if (len_trim(fallback_paths(i)) == 0) cycle
+      ren = renderer_create(trim(fallback_paths(i)), font_size)
+      if (ren%initialized) then
+        found_path = fallback_paths(i)
+        print *, "Using fallback font: ", trim(found_path)
+        return
+      end if
+    end do
+  end subroutine try_font_fallbacks
 
   ! Handle tab action signals from keyboard
   subroutine handle_tab_action(action)

@@ -124,6 +124,9 @@ contains
       tab_bar_height = 0
     end if
 
+    ! Update window module with tab bar info for click detection
+    call window_set_tab_bar_info(tab_bar_height, rs_tab_mgr%count, rs_win_width)
+
     ! Guard against no active tab
     if (rs_tab_mgr%active_index < 1 .or. rs_tab_mgr%active_index > rs_tab_mgr%count) then
       call renderer_flush(rs_ren)

@@ -20,6 +20,7 @@ module window_mod
   public :: window_get_tab_action, window_clear_tab_action
   public :: window_get_pane_action, window_clear_pane_action
   public :: window_is_focused
+  public :: window_set_tab_bar_info
 
   ! Tab action constants
   integer, parameter, public :: TAB_ACTION_NONE = 0
@@ -71,6 +72,11 @@ module window_mod
 
   ! Pane action state
   integer, save :: pending_pane_action = 0  ! 0=none, 1=split_v, 2=split_h, 3-6=nav
+
+  ! Tab bar geometry for click detection
+  integer, save :: tab_bar_height = 0       ! 0 when hidden (1 tab), else ~28
+  integer, save :: tab_count = 1            ! Number of tabs
+  integer, save :: tab_bar_win_width = 800  ! Window width for tab width calc
 
   ! Live resize rendering support
   logical, save :: is_resizing = .false.
@@ -770,6 +776,8 @@ contains
     integer(c_int), value :: button, action, mods
     real(c_double) :: xpos, ypos
     integer :: col, row
+    integer :: clicked_tab
+    real :: tab_width
 
     ! Unused argument (required by GLFW callback signature)
     if (.false.) print *, mods
@@ -779,9 +787,28 @@ contains
 
     call glfwGetCursorPos(window, xpos, ypos)
 
+    ! Check if click is in the tab bar area (only on press)
+    if (action == GLFW_PRESS .and. tab_bar_height > 0 .and. tab_count > 1) then
+      if (int(ypos) < tab_bar_height) then
+        ! Calculate which tab was clicked
+        ! Tab width calculation matches tab_bar.f90 logic
+        tab_width = real(tab_bar_win_width) / real(tab_count)
+        if (tab_width > 200.0) tab_width = 200.0
+        if (tab_width < 80.0) tab_width = 80.0
+
+        clicked_tab = int(xpos / tab_width) + 1
+        if (clicked_tab >= 1 .and. clicked_tab <= tab_count) then
+          ! Set pending action: 10 = tab 1, 11 = tab 2, etc.
+          pending_tab_action = 9 + clicked_tab
+        end if
+        return  ! Don't start text selection when clicking tabs
+      end if
+    end if
+
     ! Convert pixel position to terminal cell coordinates (1-based)
+    ! Account for tab bar offset when converting y coordinate
     col = int(xpos / cell_width) + 1
-    row = int(ypos / cell_height) + 1
+    row = int((ypos - real(tab_bar_height)) / cell_height) + 1
 
     ! Clamp to valid range
     if (associated(active_term)) then
@@ -965,5 +992,13 @@ contains
   subroutine window_clear_pane_action()
     pending_pane_action = PANE_ACTION_NONE
   end subroutine window_clear_pane_action
+
+  ! Set tab bar info for click detection
+  subroutine window_set_tab_bar_info(bar_height, count, win_width)
+    integer, intent(in) :: bar_height, count, win_width
+    tab_bar_height = bar_height
+    tab_count = count
+    tab_bar_win_width = win_width
+  end subroutine window_set_tab_bar_info
 
 end module window_mod
